@@ -1,0 +1,28 @@
+{
+  "name": "dsh-profile-desktop",
+  "private": true,
+  "dependencies": {
+    "@smalltailqwq/dsh-client-ui-skin-deep-whale-manager": "link:C:/Users/admin/Downloads/dsh-deep-whale-main/dsh-deep-whale-main/skin-manager",
+    "@smalltailqwq/dsh-client-ui-skin-maid-atelier": "link:C:/Users/admin/Downloads/dsh-deep-whale-main/dsh-deep-whale-main/maid-atelier",
+    "dsh-live2d-avatar": "link:D:/deepseek/deepseekh_work/plugins/dsh-live2d",
+    "dsh-meme": "^0.1.44",
+    "dsh-tri-layer-memory": "file:./vendor/dsh-tri-layer-memory-0.1.2.tgz"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@deepseek-ai/dsh-experimental-agent-team-profile",
+        "@deepseek-ai/dsh-experimental-auto-review",
+        "@deepseek-ai/dsh-experimental-schedule-bundle",
+        "@deepseek-ai/dsh-experimental-voice-input-bundle",
+        "@smalltailqwq/dsh-client-ui-skin-deep-whale-manager",
+        "dsh-meme",
+        "@smalltailqwq/dsh-client-ui-skin-maid-atelier",
+        "dsh-live2d-avatar",
+        "dsh-tri-layer-memory"
+      ]
+    }
+  }
+}

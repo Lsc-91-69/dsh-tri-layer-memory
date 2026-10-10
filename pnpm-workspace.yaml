@@ -1,0 +1,13 @@
+# pnpm 12 的设置集中在这里（pnpm 10+ 已把多数 .npmrc 项迁移到本文件）。
+
+# esbuild 需要 postinstall 落二进制；它只在开发期构建 lib/ 时使用，
+# 最终用户安装本插件不需要 esbuild（lib/ 产物随仓库提交）。
+allowBuilds:
+  esbuild: true
+
+# @deepseek-ai/* 由 DSH 宿主进程在运行时提供，不是安装期依赖。
+# 自动补齐 peer 会从 registry 拉一份过期副本（@deepseek-ai/dsh-tools@0.0.1-rc.1），
+# 而那份副本自己缺 @deepseek-ai/dsh-session，于是插件 import 直接失败：
+#   Cannot find package '@deepseek-ai/dsh-session' imported from .../dsh-tools/lib/index.js
+# 参照本 profile 中正常工作的第三方 bundle dsh-meme —— 它同样只声明 peer 而不装副本。
+autoInstallPeers: false

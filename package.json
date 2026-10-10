@@ -1,0 +1,58 @@
+{
+  "name": "dsh-tri-layer-memory",
+  "version": "0.1.20",
+  "description": "三层记忆压缩引擎 — 人脑式上下文压缩的显式分层实现: L1 工作记忆(原文保留) / L2 短期记忆(LLM 摘要, 每轮注入) / L3 深层记忆(本地持久化 + 按需 recall)。自包含、零第三方 DSH 插件依赖，装一个开关即用。",
+  "type": "module",
+  "main": "./lib/entry.js",
+  "exports": {
+    ".": "./lib/entry.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "memory",
+    "compaction",
+    "context-compression",
+    "three-layer"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/verify-sources.mjs && node --check lib/entry.js && node --check lib/impl.js && node --check lib/client.js",
+    "test": "node --test \"test/*.test.mjs\"",
+    "verify": "npm run build && npm run check && npm run test"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5"
+  }
+}

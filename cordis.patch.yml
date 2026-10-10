@@ -1,0 +1,64 @@
+# dsh-tri-layer-memory bundle patch — 三层记忆压缩引擎
+#
+# 本 bundle 只做一件事：把本插件自己的一行插进 profile 的组合树。
+# 它是一个**自包含**插件——不随附、不依赖任何第三方 DSH 插件，因此：
+#   - 插件列表里只有 dsh-tri-layer-memory 一个开关，不会有别的条目冒出来；
+#   - 不会出现 `incompatible-version` 红标（那种错来自随附包的 peer 范围与
+#     宿主版本不匹配，本包不再随附任何东西，自然也就没有这个问题）；
+#   - 关掉它 = 三层记忆完全停止，不留任何残留行。
+#
+# ── 挂载平面（全局生效的关键）─────────────────────────────────────────────
+# 本 patch 由 profile 的 bundle 层应用，落在 **host 平面**，早于任何 preset 的
+# agent.cordis.yml。因此无论用户用 standard / ptc / cordis / minimal 预设，
+# 本插件都自动生效——它不读取任何 preset id，也不出现在任何 preset 的行列表里。
+# （反面教材：agent-instructions 同时被三个 preset 各自列一遍，改一处漏两处。）
+#
+# ── 与压缩引擎的关系 ──────────────────────────────────────────────────────
+# ctx.compaction 服务每个上下文只允许一个实现，本插件**不占用**该槽位：
+# 它通过 agent/pre-step 注入分层投影、用 memory_recall 做按需召回，与宿主自带的
+# compaction-basic 以及用户自行安装的 argp / instant / headroom 都正交共存。
+# 因此本 patch **不动 compaction-basic**，也不插入任何第三方引擎行。
+#
+# ── 路径纪律 ──────────────────────────────────────────────────────────────
+# 本行不含落盘路径：L3 的存储目录由插件在运行时推导
+# （l3Dir > $DSH_HOME/tri-layer-memory > ~/.dsh/tri-layer-memory > 临时目录），
+# 绝不硬编码机器路径（历史教训：patch 写死作者本机目录，其他用户装完直接起不来）。
+
+- insert:
+    - id: dsh-tri-layer-memory
+      name: dsh-tri-layer-memory
+      # 组合级默认值；用户在 Settings → Plugins 的卡片里改的会覆盖这里。
+      # 键名与 src/host/config-core.ts 的 TriLayerConfig 一一对应（扁平标量）。
+      config:
+        l1RetainTurns: 8
+        l2RetainTurns: 24
+        l2Mode: llm
+        l3Enabled: true
+        l3Store: auto
+        l3Dir: ''
+        recallToolName: auto
+        injectionBudgetTokens: 1200
+        integrationEngine: auto
+
+# ── 检测但不随附的社区组件 ────────────────────────────────────────────────
+# 本插件会在运行期探测下列组件是否在场，并把结果纳入 memory_state /
+# memory_verify 的组件矩阵（输出里标 `shipped: false`）。**它不会替你安装，
+# 也不会因为缺了它们而失效**——三层记忆本体与它们各自独立。
+#
+#   dsh-argp          0-LLM 原子引用图剪枝；L3 的剪枝评分思路即来源于它。
+#                     需要时自行 `dsh plugin --profile desktop add dsh-argp`，
+#                     再把 profile 里的 compaction-basic 关掉并给它加一行。
+#                     ⚠ 工具 `recall` 与 instant 重名，两者绝不能同时启用。
+#
+#   dsh-mnemon        三层记忆模型的成熟实现（运行时记忆 / 档案 / 记忆体），
+#                     提供 mnemonMemory 服务与 16 个 mnemon_* 工具。
+#                     与本插件的三层模型重叠，同时启用会有两套写入路径——
+#                     建议二选一，而不是并联。
+#
+#   dsh-headroom      工具输出压缩 + CCR 可逆存储（L2 工具结果压缩的现成实现）。
+#                     ⚠ 它**没有 bundle patch**，只能由用户自己显式插行。
+#
+# 以下三个与 DSH 0.2.0-rc.2 不兼容（peer 声明为 ^0.1.0-rc.6 系列，落在范围外），
+# 插件管理器会以 incompatible-version 拒绝启用，因此不再列入推荐：
+#   dsh-compaction-instant / dsh-memory-vault / dsh-mcp-lens
+# 检测逻辑仍保留：等 DSH 升到兼容版本后装回来，矩阵会如实显示它们。

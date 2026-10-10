@@ -1,0 +1,21 @@
+node_modules/
+*.log
+.DS_Store
+# npm pack 产物：可分发的安装包，但随时可由 `npm pack` 重新生成
+*.tgz
+
+# deploy.mjs 每次部署在本机留下的备份
+.backup-*/
+
+# 本地诊断 / 体检 / 评估输出。
+# **必须忽略**：这些脚本的夹具里含真实会话 ID（session-xxxxxxxx-…），
+# 属于本机私有标识，不该进公开仓库。
+.depmiss-eval/
+.cause-verify/
+.profile-guard/
+.tmp/
+
+.vscode/
+.idea/
+Thumbs.db
+
