@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-density="compact" data-quote="hover" data-tokbar="on" data-now="on" data-tweaks="closed">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>思维栏 v0 · DSH 三层记忆</title>
+<style>
+/* 思维栏 v0 — 独立设计原型
+ * 深色 token 全部来自 DSH 宿主主题（@deepseek-ai/dsh-client-ui-theme
+ * 的 design_platform 层，body / body[data-ds-dark-theme] 两块），
+ * 逐条解析成 hex 后内联。浅色是对照，用同一套语义槽位的浅色值。
+ * 没有发明新色相：分类色只取宿主的 state-business / state-error / state-warn。 */
+:root{
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", "SFMono-Regular", "DejaVu Sans Mono", monospace;
+
+  /* ── 宿主 alias 层（dark） ─────────────────────────────── */
+  --bg-base:      #151517;   /* --dsw-alias-bg-base          neutral-bluish-950 */
+  --bg-layer-1:   #232324;   /* --dsw-alias-bg-layer-1       neutral-bluish-875 */
+  --bg-layer-2:   #2c2c2e;   /* --dsw-alias-bg-layer-2       neutral-bluish-850 */
+  --bg-layer-3:   #353638;   /* --dsw-alias-bg-layer-3       neutral-bluish-800 */
+  --bg-module:    #353638;   /* --dsw-alias-bg-module-platform */
+  --code-block:   #1b1b1c;   /* --dsw-alias-markdown-code-block */
+  --inline-code:  #292929;   /* --dsw-alias-markdown-inline-code */
+
+  --label-primary:    #f9fafb; /* neutral-bluish-50  */
+  --label-secondary:  #cfd3d6; /* neutral-bluish-300 */
+  --label-tertiary:   #adb2b8; /* neutral-bluish-400 */
+  --label-quaternary: #81858c; /* neutral-bluish-600 */
+  --label-inverted:   #0f1115; /* neutral-bluish-1000 */
+
+  --border-l1: #ffffff0f;
+  --border-l2: #ffffff1f;
+  --border-l3: #ffffff29;
+
+  --hover:  #ffffff14;  /* --dsw-alias-interactive-bg-hover  */
+  --active: #ffffff24;  /* --dsw-alias-interactive-bg-active */
+  --skeleton: #ffffff14;
+
+  /* 语义色 = 宿主 state-*，不是新色相 */
+  --accent:       #f59e0b;  /* --dsw-static-amber-500 / state-warn-primary */
+  --accent-label: #dd8629;  /* --dsw-static-amber-600 / state-warn-label   */
+  --info:         #7aaaff;  /* --dsw-alias-state-business-primary          */
+  --error:        #f25a5a;  /* --dsw-alias-state-error-primary             */
+  --success:      #22c55e;  /* --dsw-alias-state-success-primary           */
+  --scrollbar:      #3c3c3d;
+  --scrollbar-hover:#545557;
+
+  /* ── 非颜色 token（8pt 栅格） ───────────────────────────── */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px;
+  --r-xs:3px; --r-sm:4px; --r-md:6px; --r-lg:8px;
+  --t: 160ms cubic-bezier(.2,.7,.3,1);
+  --shadow: 0 8px 28px #00000059;
+
+  --row-py: 7px;
+  --fs-body: 13.5px;
+  --fs-small: 12px;
+  --fs-micro: 11px;
+  --lh-body: 1.5;
+  --spine-x: 40px;      /* 轮次刻度线距左缘 */
+  --gutter: 26px;       /* 刻度线 → 内容 */
+}
+:root[data-theme="light"]{
+  --bg-base:      #fff;
+  --bg-layer-1:   #fff;
+  --bg-layer-2:   #fff;
+  --bg-layer-3:   #f1f3f5;
+  --bg-module:    #f5f6f7;
+  --code-block:   #f9fafb;
+  --inline-code:  #fafafa;
+  --label-primary:    #0f1115;
+  --label-secondary:  #61666b;
+  --label-tertiary:   #81858c;
+  --label-quaternary: #adb2b8;
+  --label-inverted:   #fff;
+  --border-l1: #0000000a;
+  --border-l2: #0000001a;
+  --border-l3: #0000001f;
+  --hover:  #2631480f;
+  --active: #2631481a;
+  --skeleton: #0000000a;
+  --info:   #4176e6;
+  --error:  #ec1313;
+  --scrollbar: #e5e5e5;
+  --scrollbar-hover: #d4d4d4;
+  --shadow: 0 8px 28px #0000001a;
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  background:var(--bg-base);
+  color:var(--label-primary);
+  font-family:var(--font-ui);
+  font-size:var(--fs-body);
+  line-height:var(--lh-body);
+  -webkit-font-smoothing:antialiased;
+  text-wrap:pretty;
+}
+button{ font:inherit; color:inherit; }
+:focus-visible{ outline:1px solid var(--info); outline-offset:1px; }
+::selection{ background:#7aaaff40; }
+
+/* 滚动条：宿主 alias-scrollbar-* */
+*{ scrollbar-width:thin; scrollbar-color:var(--scrollbar) transparent; }
+*::-webkit-scrollbar{ width:9px; height:9px; }
+*::-webkit-scrollbar-thumb{ background:var(--scrollbar); border-radius:99px; border:2px solid transparent; background-clip:content-box; }
+*::-webkit-scrollbar-thumb:hover{ background:var(--scrollbar-hover); background-clip:content-box; }
+*::-webkit-scrollbar-track{ background:transparent; }
+
+/* ══ 外壳：模拟宿主的内容列（不是落地页，没有 hero） ═══════════ */
+.shell{
+  max-width:940px; margin:0 auto; min-height:100%;
+  padding:var(--s5) var(--s5) 96px;
+}
+
+/* ── 页头 ──────────────────────────────────────────────── */
+.head{ display:flex; flex-direction:column; gap:var(--s2); padding-bottom:var(--s3); border-bottom:1px solid var(--border-l1); }
+.head-top{ display:flex; align-items:baseline; justify-content:space-between; gap:var(--s3); }
+.head-title{ font-size:15px; font-weight:600; letter-spacing:.01em; }
+.head-meta{ display:flex; align-items:center; gap:var(--s3); font-size:var(--fs-micro); color:var(--label-quaternary); }
+.head-meta b{ font-weight:500; color:var(--label-tertiary); font-variant-numeric:tabular-nums; }
+.head-sub{ font-size:var(--fs-micro); color:var(--label-quaternary); font-variant-numeric:tabular-nums; }
+.head-sub code{ font-family:var(--font-mono); font-size:10.5px; }
+
+/* ── 通用区段 ──────────────────────────────────────────── */
+.sec{ margin-top:var(--s5); }
+.sec-head{ display:flex; align-items:center; gap:var(--s2); margin-bottom:var(--s2); min-height:22px; }
+.sec-name{ font-size:var(--fs-micro); font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--label-tertiary); }
+.sec-stat{ font-size:var(--fs-micro); color:var(--label-quaternary); font-variant-numeric:tabular-nums; }
+.sec-head .spacer{ flex:1; }
+.sec-note{ font-size:var(--fs-micro); color:var(--label-quaternary); margin:0 0 var(--s2); }
+
+/* 轮次锚点：tabular-nums 是数据密集列表的关键 */
+.tnum{ font-variant-numeric:tabular-nums; }
+
+/* ── 引用按钮：默认只在 hover/focus 出现 ────────────────── */
+.qbtn{
+  opacity:0; transition:opacity var(--t), border-color var(--t), color var(--t);
+  font-size:var(--fs-micro); line-height:1.3; padding:1px 7px;
+  border:1px solid var(--border-l2); border-radius:var(--r-sm);
+  background:transparent; color:var(--label-tertiary); cursor:pointer; white-space:nowrap;
+}
+:root[data-quote="always"] .qbtn{ opacity:1; }
+.row:hover .qbtn, .row:focus-within .qbtn, .sec:hover > .sec-head .qbtn, .sec:focus-within > .sec-head .qbtn{ opacity:1; }
+.qbtn:hover{ border-color:var(--label-primary); color:var(--label-primary); }
+.qbtn:active{ background:var(--active); }
+
+/* ── 1 · 任务标题 ──────────────────────────────────────── */
+.task{ display:flex; align-items:flex-start; gap:var(--s3); padding:var(--s2) 0 0; }
+.task-title{ flex:1; margin:0; font-size:14px; font-weight:600; line-height:1.45; color:var(--label-primary); }
+.task-sub{ font-size:var(--fs-micro); color:var(--label-quaternary); margin:var(--s1) 0 0; }
+
+/* ── 2 · 里程碑主线骨架（签名件：左侧 2px 轮次刻度线） ────── */
+.locate{
+  display:flex; align-items:center; gap:var(--s2);
+  font-size:var(--fs-micro); color:var(--label-quaternary); font-variant-numeric:tabular-nums;
+}
+.locate .now{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:1px 7px; border-radius:99px;
+  border:1px solid var(--border-l2); background:var(--bg-layer-2);
+  color:var(--label-secondary);
+}
+.locate .now::before{ content:""; width:5px; height:5px; border-radius:50%; background:var(--accent); }
+
+.track{ position:relative; }
+/* 贯穿全骨架的刻度线（签名件） */
+.track::before{
+  content:""; position:absolute; left:calc(var(--spine-x) - 1px); top:4px; bottom:0; width:2px;
+  background:var(--border-l2); border-radius:1px;
+}
+
+/* 分组：标题用「第 N–M 轮」，不用分隔线 */
+.grp{ display:block; position:relative; }
+.grp-head{
+  position:relative; display:flex; align-items:center; gap:var(--s2);
+  /* 左内边距必须让开刻度线：标签原本从内容列左缘（x=0）起排，
+     而 .dot 是绝对定位在刻度线上的（spine-x-4 → +4），任何超过 ~30px 的标签
+     都会从「第 1–8」的「轮」字开始被小方块压住（实测 11 个组头全中）。
+     缩进到 spine-x + gutter = 与 .row 的正文列（.body-col）同一竖线，
+     组头标签因此和条目标题对齐，刻度线上的方块也就落在标签左侧的空白里。
+     注意：padding 不会移动绝对定位的 .dot（它的定位原点是 padding 盒），方块仍钉在刻度线上。 */
+  padding:var(--s3) 0 var(--s1) calc(var(--spine-x) + var(--gutter));
+  font-size:var(--fs-micro); font-variant-numeric:tabular-nums;
+}
+.grp-head .span{ color:var(--label-secondary); font-weight:600; letter-spacing:.02em; }
+.grp-head .stat{ color:var(--label-quaternary); }
+.grp-head .bar{ flex:1; height:1px; background:var(--border-l1); }
+.grp-head .dot{
+  /* 落在刻度线正中（线在 spine-x-1 起、宽 2px → 中心 spine-x） */
+  position:absolute; left:calc(var(--spine-x) - 4px); top:calc(var(--s3) + 7px);
+  width:8px; height:8px; border-radius:2px; background:var(--bg-layer-3);
+  box-shadow:0 0 0 3px var(--bg-base);
+}
+.grp.is-now .grp-head .dot{ background:var(--accent); }
+.grp.is-now .grp-head .span{ color:var(--accent-label); }
+
+.rows{ list-style:none; margin:0; padding:0; }
+.row{
+  position:relative;
+  display:grid; grid-template-columns:var(--spine-x) 1fr auto;
+  align-items:start;
+  padding:var(--row-py) 0;
+  transition:background var(--t);
+  border-radius:var(--r-sm);
+}
+.row + .row{ box-shadow:0 -1px 0 var(--border-l1) inset; }
+.row:hover{ background:var(--hover); }
+.row:focus-within{ background:var(--hover); }
+
+/* 轮次锚点：低对比中性色，落在刻度线上 */
+.anchor{
+  padding-right:var(--s2); text-align:right;
+  font-family:var(--font-mono); font-size:10.5px; line-height:1.9;
+  color:var(--label-quaternary); font-variant-numeric:tabular-nums; letter-spacing:-.02em;
+}
+.anchor .tick{
+  position:absolute; left:calc(var(--spine-x) - 4.5px); top:calc(50% - .5px);
+  width:11px; height:2px; background:var(--bg-layer-3); border-radius:1px;
+}
+.row:hover .anchor .tick{ background:var(--label-tertiary); }
+/* 当前轮：中性底色 + 刻度线上加粗的一段 + 金色锚点（不抢戏，但一眼能找到） */
+.row.is-now{ background:color-mix(in srgb, var(--accent) 8%, transparent); }
+.row.is-now:hover{ background:color-mix(in srgb, var(--accent) 14%, transparent); }
+.row.is-now .anchor{ color:var(--accent-label); font-weight:500; }
+.row.is-now .anchor .tick{ background:var(--accent); height:3px; top:calc(50% - 1.5px); width:17px; left:calc(var(--spine-x) - 8.5px); }
+
+.body-col{ padding-left:var(--gutter); min-width:0; }
+.row-title{ display:flex; align-items:baseline; gap:var(--s2); }
+.row-title h4{
+  margin:0; font-size:var(--fs-body); font-weight:400; line-height:1.45;
+  color:var(--label-primary); flex:1; min-width:0;
+}
+.row-cause{ margin:2px 0 0; font-size:var(--fs-small); line-height:1.45; color:var(--label-tertiary); }
+.row-cause::before{ content:"— "; color:var(--label-quaternary); }
+
+/* 分类标记：不用彩色 pill，只用一条 2px 竖条 + 极小字 */
+.cat{
+  flex:none; display:inline-flex; align-items:center; gap:4px;
+  font-size:10.5px; line-height:1.6; color:var(--label-quaternary); white-space:nowrap;
+}
+.cat::before{ content:""; width:2px; height:10px; border-radius:1px; background:var(--label-quaternary); }
+.cat[data-cat="失败"],.cat[data-cat="回退"],.cat[data-cat="中断"]{ color:var(--error); }
+.cat[data-cat="失败"]::before,.cat[data-cat="回退"]::before,.cat[data-cat="中断"]::before{ background:var(--error); }
+.cat[data-cat="转向"],.cat[data-cat="目标"],.cat[data-cat="决策"]{ color:var(--info); }
+.cat[data-cat="转向"]::before,.cat[data-cat="目标"]::before,.cat[data-cat="决策"]::before{ background:var(--info); }
+.cat[data-cat="交付"],.cat[data-cat="验证"]{ color:var(--success); }
+.cat[data-cat="交付"]::before,.cat[data-cat="验证"]::before{ background:var(--success); }
+.cat[data-cat="压缩"]{ color:var(--accent-label); }
+.cat[data-cat="压缩"]::before{ background:var(--accent); }
+
+/* token 微条：读密度的量，不读颜色 */
+.tokbar{ display:flex; align-items:center; gap:var(--s2); flex:none; padding-top:5px; }
+.tokbar .num{ font-family:var(--font-mono); font-size:10.5px; color:var(--label-quaternary); font-variant-numeric:tabular-nums; min-width:22px; text-align:right; }
+.tokbar .track2{ width:34px; height:2px; border-radius:1px; background:var(--border-l2); overflow:hidden; }
+.tokbar .fill{ display:block; height:100%; background:var(--label-quaternary); }
+.row:hover .tokbar .fill{ background:var(--label-tertiary); }
+:root[data-tokbar="off"] .tokbar{ display:none; }
+:root[data-tokbar="off"] .row{ grid-template-columns:var(--spine-x) 1fr auto; }
+
+/* ── 3 · L2 短期摘要 ───────────────────────────────────── */
+.l2-wrap{ border:1px solid var(--border-l2); border-radius:var(--r-md); background:var(--bg-layer-1); }
+.l2-sum{
+  display:flex; align-items:center; gap:var(--s2); cursor:pointer; list-style:none;
+  padding:var(--s2) var(--s3); font-size:var(--fs-micro); color:var(--label-tertiary);
+  font-variant-numeric:tabular-nums;
+}
+.l2-sum::-webkit-details-marker{ display:none; }
+.l2-sum .caret{ width:8px; height:8px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(-45deg); transition:transform var(--t); flex:none; margin-left:-2px; }
+details[open] > .l2-sum .caret{ transform:rotate(45deg); }
+.l2-sum .grow{ flex:1; }
+.l2-body{ padding:0 var(--s3) var(--s3); border-top:1px solid var(--border-l1); }
+.l2-sec + .l2-sec{ margin-top:var(--s3); padding-top:var(--s3); border-top:1px solid var(--border-l1); }
+.l2-sec h5{ margin:0 0 var(--s1); font-size:var(--fs-small); font-weight:600; color:var(--label-secondary); letter-spacing:.01em; }
+.l2-sec ul{ margin:0; padding-left:var(--s4); }
+.l2-sec li{ font-size:var(--fs-small); line-height:1.62; color:var(--label-tertiary); margin:1px 0; }
+.l2-sec li.sub{ list-style:circle; margin-left:var(--s3); color:var(--label-quaternary); }
+.l2-sec p{ margin:0; font-size:var(--fs-small); line-height:1.62; color:var(--label-tertiary); }
+.l2-sec li::marker{ color:var(--label-quaternary); }
+.l2-sec strong{ font-weight:600; color:var(--label-secondary); }
+.l2-sec code{
+  font-family:var(--font-mono); font-size:11px; padding:0 3px; border-radius:var(--r-xs);
+  background:var(--inline-code); border:1px solid var(--border-l1); color:var(--label-secondary);
+}
+.l2-fold{ padding:var(--s2) var(--s3) 0; }
+.l2-fold button{
+  border:1px solid var(--border-l2); background:transparent; color:var(--label-tertiary);
+  border-radius:var(--r-sm); padding:2px 9px; font-size:var(--fs-micro); cursor:pointer; transition:var(--t);
+}
+.l2-fold button:hover{ color:var(--label-primary); border-color:var(--label-primary); }
+
+/* ── 4 · L3 深层记忆（按会话分组） ──────────────────────── */
+.sess{ border:1px solid var(--border-l1); border-radius:var(--r-md); background:var(--bg-layer-1); }
+.sess + .sess{ margin-top:var(--s2); }
+.sess-sum{
+  display:flex; align-items:center; gap:var(--s2); cursor:pointer; list-style:none;
+  padding:var(--s2) var(--s3); font-size:var(--fs-micro); font-variant-numeric:tabular-nums;
+}
+.sess-sum::-webkit-details-marker{ display:none; }
+.sess-sum .caret{ width:7px; height:7px; border-right:1.5px solid var(--label-quaternary); border-bottom:1.5px solid var(--label-quaternary); transform:rotate(-45deg); transition:transform var(--t); flex:none; }
+details[open] > .sess-sum .caret{ transform:rotate(45deg); }
+.sess-id{ font-family:var(--font-mono); font-size:10.5px; color:var(--label-tertiary); }
+.sess-sum .grow{ flex:1; height:1px; background:var(--border-l1); }
+.sess-sum .stat{ color:var(--label-quaternary); white-space:nowrap; }
+.badge{
+  font-size:10px; line-height:1.6; padding:0 6px; border-radius:99px; white-space:nowrap;
+  border:1px solid var(--border-l2); color:var(--label-quaternary);
+}
+.badge.own{ border-color:#f59e0b59; color:var(--accent-label); }
+.sess-body{ border-top:1px solid var(--border-l1); }
+
+.rec{
+  display:grid; grid-template-columns:1fr auto; gap:var(--s3);
+  padding:var(--s2) var(--s3); align-items:start;
+}
+.rec + .rec{ border-top:1px solid var(--border-l1); }
+.rec:hover{ background:var(--hover); }
+.rec-meta{
+  display:flex; align-items:center; gap:var(--s2); flex-wrap:wrap;
+  font-size:10.5px; color:var(--label-quaternary); font-variant-numeric:tabular-nums;
+}
+.rec-meta .kind{ display:inline-flex; align-items:center; gap:4px; color:var(--label-tertiary); }
+.rec-meta .kind::before{ content:""; width:2px; height:9px; border-radius:1px; background:var(--label-quaternary); }
+.rec-meta .kind[data-kind="milestone"]{ color:var(--accent-label); }
+.rec-meta .kind[data-kind="milestone"]::before{ background:var(--accent); }
+.rec-meta .kind[data-kind="digest"]{ color:var(--info); }
+.rec-meta .kind[data-kind="digest"]::before{ background:var(--info); }
+.rec-meta .id{ font-family:var(--font-mono); font-size:10px; color:var(--label-quaternary); opacity:.8; }
+.rec-text{
+  margin:var(--s1) 0 0; font-size:var(--fs-small); line-height:1.55; color:var(--label-tertiary);
+  overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  white-space:pre-wrap; overflow-wrap:anywhere;
+}
+.rec.open .rec-text{ -webkit-line-clamp:unset; display:block; }
+.rec-text .h{ color:var(--label-secondary); font-weight:600; }
+.rec-actions{ display:flex; align-items:center; gap:var(--s2); }
+.rec-toggle{
+  border:1px solid var(--border-l1); background:transparent; color:var(--label-quaternary);
+  border-radius:var(--r-sm); padding:0 6px; font-size:10px; line-height:1.7; cursor:pointer; transition:var(--t);
+}
+.rec-toggle:hover{ color:var(--label-primary); border-color:var(--border-l2); }
+.rec.open .rec-toggle{ color:var(--label-secondary); }
+
+/* 空态 / 降级态（面板只负责显示，拿不到数据就说清楚） */
+.empty{
+  padding:var(--s3); border:1px dashed var(--border-l2); border-radius:var(--r-md);
+  font-size:var(--fs-small); color:var(--label-quaternary);
+}
+
+/* ── 页脚注 ────────────────────────────────────────────── */
+.foot{ margin-top:var(--s5); padding-top:var(--s3); border-top:1px solid var(--border-l1); font-size:var(--fs-micro); color:var(--label-quaternary); }
+.foot code{ font-family:var(--font-mono); color:var(--label-tertiary); }
+
+/* ── 引用反馈（对应真实实现的 memQuoted / memQuoteFailed） ─ */
+.quote-note{
+  position:fixed; left:50%; bottom:var(--s5); transform:translateX(-50%);
+  padding:6px 14px; border-radius:99px; font-size:var(--fs-small);
+  background:var(--bg-layer-3); border:1px solid var(--border-l2); color:var(--label-secondary);
+  box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:opacity var(--t), transform var(--t);
+  z-index:60; max-width:min(560px,86vw);
+}
+.quote-note.on{ opacity:1; transform:translateX(-50%) translateY(-4px); }
+
+/* ── Tweaks 面板 ──────────────────────────────────────── */
+.tw-launch{
+  position:fixed; right:var(--s4); bottom:var(--s4); z-index:50;
+  width:34px; height:34px; border-radius:50%;
+  border:1px solid var(--border-l2); background:var(--bg-layer-2); color:var(--label-tertiary);
+  cursor:pointer; box-shadow:var(--shadow); transition:var(--t); font-size:13px;
+}
+.tw-launch:hover{ color:var(--label-primary); border-color:var(--label-tertiary); }
+:root[data-tweaks="open"] .tw-launch{ display:none; }
+
+.tw{
+  position:fixed; right:var(--s4); bottom:var(--s4); z-index:50;
+  width:266px; max-height:min(76vh,620px); overflow:auto;
+  background:color-mix(in srgb, var(--bg-layer-2) 96%, transparent);
+  backdrop-filter:blur(10px);
+  border:1px solid var(--border-l2); border-radius:var(--r-lg);
+  box-shadow:var(--shadow); padding:var(--s3);
+  font-size:var(--fs-small);
+}
+:root[data-tweaks="closed"] .tw{ display:none; }
+.tw-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--s3); }
+.tw-head b{ font-size:13px; font-weight:600; letter-spacing:.02em; }
+.tw-x{ border:0; background:transparent; color:var(--label-quaternary); cursor:pointer; font-size:14px; line-height:1; padding:2px 4px; border-radius:var(--r-sm); }
+.tw-x:hover{ color:var(--label-primary); background:var(--hover); }
+.tw-field{ margin-bottom:var(--s3); }
+.tw-field > label{ display:block; margin-bottom:5px; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--label-quaternary); }
+.seg{ display:flex; padding:2px; gap:2px; background:var(--bg-module); border-radius:var(--r-md); }
+.seg button{
+  flex:1; border:0; background:transparent; color:var(--label-tertiary);
+  padding:4px 0; border-radius:var(--r-sm); font-size:11px; cursor:pointer; transition:var(--t);
+}
+.seg button:hover{ color:var(--label-primary); }
+.seg button[aria-pressed="true"]{ background:var(--bg-layer-3); color:var(--label-primary); font-weight:600; }
+.sw{ display:flex; align-items:center; justify-content:space-between; gap:var(--s2); padding:3px 0; }
+.sw span{ color:var(--label-tertiary); font-size:var(--fs-small); }
+.sw button{
+  width:32px; height:18px; border-radius:99px; border:1px solid var(--border-l2);
+  background:var(--bg-module); position:relative; cursor:pointer; transition:var(--t); flex:none;
+}
+.sw button::after{
+  content:""; position:absolute; top:1px; left:1px; width:14px; height:14px; border-radius:50%;
+  background:var(--label-quaternary); transition:transform var(--t), background var(--t);
+}
+.sw button[aria-pressed="true"]{ background:var(--active); }
+.sw button[aria-pressed="true"]::after{ transform:translateX(14px); background:var(--label-primary); }
+.tw-foot{ border-top:1px solid var(--border-l1); padding-top:var(--s2); font-size:10.5px; color:var(--label-quaternary); line-height:1.5; }
+.tw-foot kbd{
+  font-family:var(--font-mono); font-size:10px; padding:0 3px; border-radius:var(--r-xs);
+  border:1px solid var(--border-l2); background:var(--bg-module);
+}
+
+/* ── 密度 ─────────────────────────────────────────────── */
+:root[data-density="compact"]{ --row-py:3px; --fs-body:13px; --lh-body:1.45; --spine-x:34px; --gutter:22px; }
+:root[data-density="compact"] .grp-head{ padding-top:var(--s2); }
+:root[data-density="compact"] .sec{ margin-top:var(--s4); }
+:root[data-density="compact"] .shell{ padding-top:var(--s4); }
+
+/* ── 窄屏：刻度线收窄，引用按钮常显（没有 hover 可依赖） ── */
+@media (max-width:720px){
+  :root{ --spine-x:30px; --gutter:18px; }
+  .shell{ padding:var(--s3) var(--s3) 88px; }
+  .qbtn{ opacity:1; }
+  .row{ grid-template-columns:var(--spine-x) 1fr; }
+  .tokbar{ display:none; }
+  .rec{ grid-template-columns:1fr; }
+  .rec-actions{ justify-content:flex-end; }
+}
+
+@media (prefers-reduced-motion:reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header class="head">
+    <div class="head-top">
+      <span class="head-title" id="head-title">思维栏</span>
+      <span class="head-meta" id="head-meta"></span>
+    </div>
+    <div class="head-sub" id="head-sub"></div>
+  </header>
+
+  <!-- 1 · 任务标题 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">任务标题</span>
+      <span class="spacer"></span>
+    </div>
+    <div class="task" id="task-row">
+      <p class="task-title" id="task-title"></p>
+    </div>
+  </section>
+
+  <!-- 2 · 里程碑主线骨架 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">里程碑主线骨架</span>
+      <span class="sec-stat" id="mainline-stat"></span>
+      <span class="spacer"></span>
+      <span class="locate" id="locate"></span>
+    </div>
+    <div id="mainline"></div>
+  </section>
+
+  <!-- 3 · L2 短期摘要 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">L2 短期摘要</span>
+      <span class="sec-stat" id="l2-stat"></span>
+      <span class="spacer"></span>
+      <button class="qbtn" id="l2-quote" type="button" title="引用 · L2 摘要">引用</button>
+    </div>
+    <p class="sec-note" id="l2-note"></p>
+    <details class="l2-wrap" id="l2-sum">
+      <summary class="l2-sum">
+        <span class="caret"></span>
+        <span>LLM 摘要正文</span>
+        <span class="grow"></span>
+        <span id="l2-hint">默认只展开前 2 节</span>
+      </summary>
+      <div class="l2-body" id="l2-body"></div>
+    </details>
+  </section>
+
+  <!-- 4 · L3 深层记忆 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">L3 深层记忆</span>
+      <span class="sec-stat" id="l3-stat"></span>
+    </div>
+    <p class="sec-note" id="l3-note"></p>
+    <div id="l3"></div>
+  </section>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<div class="quote-note" id="note" role="status" aria-live="polite"></div>
+
+<button class="tw-launch" id="tw-open" type="button" title="打开 Tweaks" aria-label="打开 Tweaks">T</button>
+
+<aside class="tw" id="tw" role="dialog" aria-label="Tweaks">
+  <div class="tw-head">
+    <b>Tweaks</b>
+    <button class="tw-x" id="tw-close" type="button" aria-label="关闭 Tweaks">×</button>
+  </div>
+  <div id="tw-body"></div>
+</aside>
+
+<script>
+window.__TLM__ = {"meta":{"sessionId":"session-5b59b635-915f-439d-bd73-a2da6543db8a","shortId":"5b59b635","extractedAt":"2026-10-10T01:51:03.562Z","turnCount":81,"currentTurn":81,"logBytes":5692686,"frames":2449,"events":4864,"eventTypes":[["tool/result",807],["tool/call",787],["step/start",729],["step/end",729],["assistant/message",723],["user/message",338],["agent/inbox/spliced",229],["turn/start",81],["turn/end",81],["request/header",70],["system/message",41],["developer/message",40]]},"taskTitle":"我要在 DeepSeek Harness 中创建一个新的插件","mainline":[{"turn":1,"title":"我要在 DeepSeek Harness 中创建一个新的插件","cause":"会话初始任务","category":"任务","tokens":27},{"turn":1,"title":"测试断言失败（4 次）","cause":"当轮测试通过，交付 2 文件","category":"失败","tokens":26},{"turn":1,"title":"建立目标：构建 DSH 插件「三层记忆压缩引擎」…","cause":"长任务转目标制，自动续跑","category":"目标","tokens":37},{"turn":2,"title":"测试断言失败（1 次）","cause":"当轮测试通过","category":"失败","tokens":20},{"turn":2,"title":"目标修订：构建 DSH 插件「三层记忆压缩引擎」…","cause":"目标被改写","category":"目标","tokens":30},{"turn":3,"title":"测试断言失败：memory_state…（2 次尝试）","cause":"当轮测试通过","category":"失败","tokens":26},{"turn":4,"title":"测试断言失败：arbitrateInjection：预…（2 次尝试）","cause":"当轮测试通过","category":"失败","tokens":30},{"turn":5,"title":"可安装包（8 个文件，含构建产物）——规范安装用它，而不是 link:","cause":"修复并验证通过，交付 2 文件","category":"交付","tokens":45},{"turn":6,"title":"测试断言失败：factory 导出 apply…","cause":"当轮测试通过，放权→danger-full-access","category":"失败","tokens":31},{"turn":7,"title":"本轮把推荐安装路径实测跑通了","cause":"验证通过","category":"事件","tokens":22},{"turn":8,"turnTo":11,"title":"连续 4 轮被用户中止","cause":"连续 4 轮被用户中止，未完成","category":"中断","tokens":27},{"turn":8,"turnTo":14,"title":"目标反复暂停/恢复 5 次","cause":"任务多次中断后续跑","category":"目标","tokens":24},{"turn":12,"turnTo":13,"title":"提出 3 项要求：再插件列表中有很多新添的有报错","cause":"同一诉求，后续测试通过","category":"指令","tokens":38},{"turn":15,"title":"报告 PowerShell 脚本报错，目标我先暂停了，你需要整合成一个插件","cause":"验证通过，交付 2 文件","category":"指令","tokens":42},{"turn":16,"turnTo":17,"title":"报告 PowerShell 脚本输出，提出 2 项要求：目标还要继续吗","cause":"同一诉求重复提出","category":"指令","tokens":37},{"turn":18,"title":"目标清除","cause":"目标被清除，退出目标制","category":"目标","tokens":20},{"turn":19,"title":"现在新会话有模式了，一切正常，继续插件任务","cause":"交付 2 文件，放权→auto","category":"转向","tokens":35},{"turn":20,"title":"修好了，现在测试必须同步——而且这两条断言正是这次事故的回归防护","cause":"方向变更（关闭），轮次被中止","category":"转向","tokens":49},{"turn":21,"title":"你跑一半死了","cause":"修复并验证通过","category":"指令","tokens":18},{"turn":22,"title":"预设已修复","cause":"仅对话，无代码变更","category":"回退","tokens":19},{"turn":24,"title":"上下文压缩 — 摘要 26403 字符，遮蔽 334687 tokens","cause":"窗口压力触发","category":"压缩","tokens":29},{"turn":25,"title":"状态确认了：profile patch 里没有任何 compaction 覆盖…","cause":"未解决","category":"指令","tokens":27},{"turn":26,"title":"现在这个压缩逻辑启用了吗，启用时机是什么","cause":"用户追问","category":"指令","tokens":29},{"turn":27,"title":"有遗忘部分和按需取回吗","cause":"用户追问","category":"指令","tokens":20},{"turn":28,"title":"遗忘的逻辑我想的是主内容不遗忘或进入记忆网络","cause":"仅对话，无代码变更","category":"指令","tokens":36},{"turn":29,"title":"主内容只记住关键重要变动以及任务标题（但是关于重要变动以及任务细节进入记忆网络）","cause":"仅对话，无代码变更","category":"指令","tokens":54},{"turn":30,"title":"提出 3 项要求：避免三个风险，对于第一个宁可多记忆","cause":"未解决","category":"指令","tokens":31},{"turn":31,"title":"位置是在对话和轨迹的旁边，然后开始完成任务","cause":"未解决","category":"指令","tokens":29},{"turn":32,"title":"两份研究都在推进","cause":"未解决","category":"事件","tokens":16},{"turn":33,"title":"本轮最重要的产出：找到一个真 bug 并修掉了","cause":"验证通过","category":"事件","tokens":28},{"turn":35,"title":"移植完成，修复轮在跑","cause":"未解决","category":"事件","tokens":18},{"turn":37,"turnTo":38,"title":"持续验证通过（2 轮）","cause":"稳定期，无新问题","category":"验证","tokens":23},{"turn":39,"title":"a，0.1.5我已经装上了","cause":"仅对话，无代码变更","category":"指令","tokens":22},{"turn":41,"title":"还有什么没有完成","cause":"仅对话，无代码变更","category":"指令","tokens":22},{"turn":42,"title":"先做第一个","cause":"仅对话，无代码变更","category":"指令","tokens":19},{"turn":43,"turnTo":44,"title":"连续 2 轮整轮失败：Connection error.","cause":"同一上游错误连续复现","category":"失败","tokens":28},{"turn":45,"title":"刚才网络卡住了，继续任务","cause":"验证通过","category":"指令","tokens":21},{"turn":46,"title":"先做c，在做a","cause":"验证通过","category":"指令","tokens":14},{"turn":47,"title":"继续按优先级完成，同时你要自更新插件","cause":"未解决，方向变更（不要）","category":"转向","tokens":35},{"turn":48,"title":"自更新成功 ✅","cause":"验证通过","category":"事件","tokens":14},{"turn":49,"title":"根据建议和优先级完成","cause":"仅对话，无代码变更","category":"指令","tokens":24},{"turn":50,"title":"自更新第二次成功 ✅","cause":"验证通过","category":"事件","tokens":17},{"turn":52,"title":"变异实验确认测试有牙","cause":"验证通过","category":"事件","tokens":19},{"turn":54,"title":"自己查找原文后修复","cause":"修复并验证通过","category":"指令","tokens":21},{"turn":55,"title":"为什么新会话又没有预设了，同时对话和思维栏中间的被删除了","cause":"用户追问","category":"回退","tokens":37},{"turn":55,"title":"上下文压缩 — 摘要 12426 字符，遮蔽 284525 tokens","cause":"窗口压力触发","category":"压缩","tokens":29},{"turn":56,"title":"本对话里面思维栏为空，先记下，完成任务之后再来修","cause":"未解决","category":"指令","tokens":32},{"turn":57,"title":"部署完成：0.1.15","cause":"验证通过","category":"事件","tokens":15},{"turn":58,"title":"子代理在跑（4 项任务串行","cause":"仅对话，无代码变更","category":"指令","tokens":25},{"turn":61,"title":"重启之后打开本会话的思维栏还是为空","cause":"仅对话，无代码变更","category":"回退","tokens":31},{"turn":62,"title":"刚刚和你交流完了这一轮就出现了","cause":"仅对话，无代码变更","category":"指令","tokens":29},{"turn":64,"title":"有了，可以处理l2思维链回退问题了","cause":"仅对话，无代码变更","category":"指令","tokens":29},{"turn":66,"title":"修复剩余问题","cause":"仅对话，无代码变更","category":"指令","tokens":20},{"turn":70,"title":"所有任务都完成了吗","cause":"用户追问","category":"指令","tokens":18},{"turn":71,"title":"完成未完成的三件事情","cause":"排查中，无结论","category":"指令","tokens":22},{"turn":74,"title":"继续处理，dsh-bingbingbing是我下的一个插件","cause":"仅对话，无代码变更","category":"指令","tokens":31},{"turn":76,"title":"还有什么问题为解决，重要吗","cause":"用户追问","category":"指令","tokens":22},{"turn":79,"title":"按 skill 流程","cause":"仅对话，无代码变更","category":"指令","tokens":18},{"turn":80,"title":"我创建一个之后你git上去，这个选项怎么选","cause":"仅对话，无代码变更","category":"指令","tokens":32},{"turn":81,"title":"提出 3 项要求：关闭了","cause":"验证通过，方向变更（关闭）","category":"转向","tokens":27},{"turn":81,"title":"上下文压缩 — 摘要 15240 字符，遮蔽 185391 tokens","cause":"窗口压力触发","category":"压缩","tokens":29}],"mainlineTokens":1645,"l2":{"turnFrom":50,"turnTo":66,"mode":"llm","chars":15240,"shadowedTokenCount":185391,"totalSummaries":3,"atSeq":4803,"sections":[{"h":"Primary Request and Intent","items":[{"t":"li","v":"Build DSH plugin `dsh-tri-layer-memory` (\"三层记忆压缩引擎\"): L1 working memory (last N turns verbatim) / L2 short-term (LLM summary, injected) / L3 deep memory (local persistence + `memory_recall`). Self-contained, one toggle, no compatibility problems."},{"t":"li","v":"User refinements, verbatim:"},{"t":"sub","v":"\"遗忘的逻辑我想的是主内容不遗忘或进入记忆网络，分支内容保留主要部分，其余进入记忆网络，每轮对话的细节部分进入记忆网络，按需取回\""},{"t":"sub","v":"\"主内容只记住关键重要变动以及任务标题（但是关于重要变动以及任务细节进入记忆网络）\""},{"t":"sub","v":"\"1.避免三个风险，对于第一个宁可多记忆，对于第二个标题里带一句原因（+15 tokens/条），对于迪桑按事件\""},{"t":"sub","v":"\"位置是在对话和轨迹的旁边\""},{"t":"sub","v":"\"同时你要自更新插件，不要让我来，因为我每次删除重装的时候思维栏里面的可视化内容会消失，同时你安装的时候要避免兼容性问题\""},{"t":"sub","v":"\"1.思维链每次打开dsh的时候为空，要跑完一轮会话之后才会显示从第一轮会话到最后一轮会话的完整思维 / 完成优先级完成\""},{"t":"sub","v":"\"本对话里面思维栏为空，先记下，完成任务之后再来修\""},{"t":"sub","v":"\"自己查找原文后修复\""},{"t":"sub","v":"\"有了，可以处理l2思维链回退问题了\""},{"t":"sub","v":"\"修复剩余问题\" ← **current instruction**"},{"t":"li","v":"Priority list: 1) long-user-message title summarization → DONE; 2) `cause` field → DONE; 3) README → DONE; 4) 可引用 → DONE; 5) three accounting issues → DONE."}]},{"h":"Key Technical Concepts","items":[{"t":"li","v":"DSH 0.2.0-rc.2 (shipped app); checkout `D:\\deepseek\\deepseekh_work\\upstream\\extract` is older 0.1.5-rc.1 — **verify against installed app.asar**."},{"t":"li","v":"`exports.inject` = hard dependency: missing service ⇒ fiber stays `pending` ⇒ host refuses to boot. All services via soft `ctx.inject([...], cb)`."},{"t":"li","v":"Loader `internal/update` handler calls `entry.parent.tree.write()` → rewrites `cordis.patch.yml` from in-memory tree, **destroying user config** when failing rows exist."},{"t":"li","v":"Real Session API: `snapshotEvents(fromSeq, toSeqExclusive)` / `ownEvents()`; **no `events` property**."},{"t":"li","v":"Event shapes: `user/message` body at `data.content`; `assistant/message` and `tool/result` at `data.message.content`; task title only in `agent/inbox/spliced` → `data.inserted[].content`; `tool/result` carries `data.message.toolCallId`; tool name only on `tool/call` → `data.name`."},{"t":"li","v":"Two exit-code formats: `[exit code: 1]` (pwsh) and `[status: completed, exit code: 1]` (job_output)."},{"t":"li","v":"`conversation.view` slot (list, session scope): occupants `chat`(0), `trajectory`(10), `memory`(20) — all three confirmed active in live slot tree."},{"t":"li","v":"Session projection: `ctx.sessionProjections.register({key, stateSchema, init, apply, wire:{viewSchema, view}, stateVersion})`."},{"t":"li","v":"**`stateVersion` must be bumped whenever fold semantics change** — the projection cache only treats rows with matching `ver` as usable."},{"t":"li","v":"**Cold-read path for existing sessions**: `sessions.prepare(...)` creates an *unpublished* Session → `registry.restore(checkpoint, events, baseSeq=0)`. Checkpoint is always at log end ⇒ replay window empty ⇒ **`apply` is never called**; `sessions.get(id)` returns undefined for prepared sessions; `session/created` fires after the first frame."},{"t":"li","v":"`reasoningEffort` shares the output token budget: pi-ai `dsh-llm-pi-ai/lib/index.js:1366` \"reasoning folded into output by pi-ai\"."},{"t":"li","v":"`deepseek-v4.1-flash` `thinkingLevelMap: {off: null, low:\"low\", high:\"high\", max:\"max\"}`; `off` filtered out by `getSupportedThinkingLevels` (`:753-761`) ⇒ only low/high/max valid."},{"t":"li","v":"`dsh-llm-pi-ai/lib/index.js:1851`: `options.reasoningEffort ?? profile.reasoning`; profile has no `reasoning:` ⇒ no effort sent."},{"t":"li","v":"`pi-ai/dist/api/openai-completions.js:666-673` (deepseek branch): with no effort, `thinking:{type:\"disabled\"}` only sent when `thinkingLevelMap.off !== null` ⇒ for this model **nothing is sent** ⇒ gateway default thinking runs."},{"t":"li","v":"Platform convention: `dsh-llm/lib/types/assembler.js:121-126` keeps text on max-tokens, only discards unsafe tool calls."},{"t":"li","v":"Self-update mechanism: `lib/entry.js` thin shell re-imports `./impl.js?generation=<Date.now()>` on every activation ⇒ replacing `lib/` + re-activating reloads without process restart."},{"t":"li","v":"esbuild: `minify: true` + `charset: 'utf8'` (851KB → 404KB). **Minification mangles function names** — grepping `lib/impl.js` for a function name is NOT evidence of absence; grep for string literals instead."},{"t":"li","v":"`conversation.view` standardProps include `inputActions: InputActions` (`setDraft(text)`/`submit()`, `packages/client/ui-conversation/src/client/contract/input.ts:229`) and `useInput` (`InputState.draft`, `:329-331`)."},{"t":"li","v":"DSH session logs: `session.v4.jsonl.zstd` = concatenated zstd frames (magic `28 B5 2F FD`)."}]},{"h":"Files and Code","items":[{"t":"li","v":"`D:\\deepseek\\deepseekh_work\\plugins\\dsh-tri-layer-memory\\` — plugin root, version **0.1.18**, deps `{@deepseek-ai/schemastery, zod}`."},{"t":"li","v":"`src/host/index.ts` (~1300 lines) — `readEvents()` with `snapshotEvents()` fallback; `refreshDigest()`; `refreshMainline()` (high-water mark); `refreshMainlineCauses()` (fire-and-forget + `CAUSE_INLINE_WAIT_MS = 1500`); `CAUSE_TIMEOUT_MS = 45_000`; `CAUSE_MAX_TOKENS = 4096`; `writeDiagnostics(state, sessionId)` → `<sessionId>.diagnostics.json`; `writeHydrateDiagnostics` → `<sessionId>.hydrate.json`; `hydrateProjectionFeed(session)` / `hydrateProjectionFeedById(id)`; `session/created` + `session/disposed` listeners; `llmSeam()`; `sessionIdOf(session)`."},{"t":"li","v":"`src/host/l1-working.ts` — `messageBody(data)`; `TurnSpan.tokens` (accumulated via `estimateTokens(text)`, NOT `estimateTokens(String(charCount))`); `WorkingWindow.tokens`; `renderWorkingMemory` uses `window.tokens`."},{"t":"li","v":"`src/host/milestones.ts` (~1900 lines) — `Milestone{turn,turnTo?,title,cause,detail,category,tokens}`, `extractMilestones`, `renderMainline`, `stripInjections`, `clipUnit`, `listSummary`, `proseTitle`, `missingCauses`, `renderCauseRequest(slots, excerptChars=120)`, `CAUSE_INSTRUCTION`, `parseCauseReply`, `applyCauses`, `attachCauses`, `causeExcerpt(detail, limit)`, `CAUSE_EXCERPT_CHARS=120`, `CAUSE_EXCERPT_MAX=500`, `causeCacheKey()` = `区间#标题` (unchanged)."},{"t":"li","v":"`src/host/l2-short.ts` — `summarizeWithLlm` now **three-state**: `ok` / `truncated` (hit max-tokens but non-empty text → trim at boundary, keep `via: 'llm'`) / `failed` (stream error / abort / **empty text only**). Request carries `reasoningEffort` (default `low`); on `UNSUPPORTED_REASONING_EFFORT` retries without the field. Records finish/usage."},{"t":"li","v":"`src/host/l2-render.ts` — `trimAtBoundary` (line > sentence > raw; Chinese `。！？` without space; `v4.1`/`config.yml` dots not sentence ends); `DigestAttempt` type; `DigestResult.attempt`; `DIGEST_INSTRUCTION` now pins ~600 tokens / 25-30 items."},{"t":"li","v":"`src/host/config-core.ts` — flat scalars; `l2MaxSummaryTokens: 4096`; new `l2ReasoningEffort` (`inherit|off|low|high|max`, default `low`); `mainlineCauseExcerptChars` (120, 0–500); `mainlineCauseEnabled/MinBatch(3)/MaxPerCall(20)`; `mainlineEnabled/Inject/MaxMilestones(60)/MaxTokens(2500)`; 33 keys total."},{"t":"li","v":"`src/host/projection.ts` (~421+ lines) — `PROJECTION_KEY='tri-layer-memory'`, `stateVersion: 2`, `createTriLayerProjection({ hydrate })`, `derive` fallback (accumulates folded events when no feed; `view()` computes from them), `view()` publishes freshest of state/feed/derived."},{"t":"li","v":"`src/host/l3-deep.ts` — `MemoryRecord.kind: 'digest'|'turn'|'artifact'|'milestone'`; `selectPrunable` exempts milestones in both passes; `update(id, patch)`."},{"t":"li","v":"`src/host/budget.ts` — `arbitrateInjection(blocks, budgetTokens)`; `fitMainline()`; `InjectionBlock.truncationNote` (L2 uses a shorter note naming `includeDigest: true`, ≈18 tokens < default 24)."},{"t":"li","v":"`src/host/recall.ts` — `buildStatus`; new `L2-truncated` verdict (ok:true, \"部分可用\"); `l3.libraryCount/libraryTokens` + `sessionCount/sessionTokens`."},{"t":"li","v":"`src/client.js` — `conversation.view` `{id:'memory', order:20, label:()=>t('view.memory')}`; **`inject = [\"slots\",\"locale\"]` unchanged**; four entry classes have 「引用」 buttons using `useInput(s=>s.draft)` + `inputActions.setDraft`; `memNotReady` copy updated."},{"t":"li","v":"`cordis.patch.yml` — single row `- id: dsh-tri-layer-memory`; currently **267 lines**, byte-identical across re-activations."},{"t":"li","v":"`scripts/build.mjs`, `scripts/deploy.mjs` (in-place deploy, `--dry-run`), `scripts/restore-bundles.mjs`."},{"t":"li","v":"`test/` — `layers.test.mjs`, `mount.test.mjs`, `client.test.mjs`, `contract.test.mjs`, `mainline.test.mjs`, `projection.test.mjs`, `cause.test.mjs`, `l2-seam.test.mjs`, `l2-salvage.test.mjs` (new). **177 tests + 75/75 contract.**"},{"t":"li","v":"`D:\\deepseek\\deepseekh_work\\feasibility\\` — `probe.mjs`, `lib.mjs`, `extract.mjs`, `extract-out.txt`, `measure.mjs`, `find-l2.mjs`, `REPORT-round2.md`."},{"t":"li","v":"`D:\\deepseek\\deepseekh_work\\_tlm_probe\\` — host source extracts: `deployed_probe.mjs`, `piai_ids2.mjs`, `dsh-llm-pi-ai__index.js`, `piai__openai-completions.js`."},{"t":"li","v":"Profile `C:\\Users\\admin\\.dsh\\profiles\\desktop\\` — `package.json` (**10 bundles**), `cordis.patch.yml` (267 lines, intact), `vendor/dsh-tri-layer-memory-0.1.18.tgz`."},{"t":"li","v":"Diagnostics dir `C:\\Users\\admin\\.dsh\\tri-layer-memory\\` — `<sessionId>.diagnostics.json`, `<sessionId>.hydrate.json`, `deep-memory.sqlite`."},{"t":"li","v":"Projection cache `C:\\Users\\admin\\.dsh\\storages\\session_projcache\\sessions\\*.json`."}]},{"h":"Errors and Fixes","items":[{"t":"li","v":"Plugin list red \"异常\" badges: `incompatible-version` on `dsh-compaction-instant@0.1.4`, `dsh-mcp-lens@0.1.0-rc.9`, `dsh-memory-vault@0.1.5` (declare `@deepseek-ai/* ^0.1.0-rc.6` peers vs runtime 0.2.0-rc.2). Fixed by removing all third-party deps."},{"t":"li","v":"App boot failure `1 entry did not activate / dsh-tri-layer-memory: pending (waiting for service: settingsScope)`: client half hard-injected `settingsScope`. Fixed → `inject = [\"slots\",\"locale\"]` + soft `ctx.inject`."},{"t":"li","v":"Crash-dialog choice truncated `cordis.patch.yml` 267→28 lines, wiping preset registry/models. Restored from `.backup-before-tlm\\cordis.patch.yml`."},{"t":"li","v":"**Critical**: `readEvents` read `session.events` (nonexistent) → L1/L2/mainline silently dead. Fixed with `snapshotEvents()` fallback + mutation-verified regression test."},{"t":"li","v":"L1 body-shape bug: read `data.content` for assistant/tool → `charCount` understated ~75×, L2 built from user text only. Fixed via `messageBody()`."},{"t":"li","v":"`estimateTokens(String(charCount))` → reported \"约 2 tokens\" for a 520K-char window. Fixed by accumulating `estimateTokens(text)` per turn; regression test mutation-verified."},{"t":"li","v":"`l2MaxSummaryTokens: 1024` + `CAUSE_MAX_TOKENS: 512` + `reasoningEffort: max` ⇒ reasoning ate the whole budget ⇒ `summarization truncated at the token cap` / `cause reply carried no parsable entries (0 chars)`. Fixed by raising to 4096, adding `l2ReasoningEffort: low`, and **keeping truncated-but-non-empty text instead of discarding it**. Confirmed live: `finish: \"stop\"`, `outputChars: 2077`, `outputTokens: 1776/4096`, `via: \"llm\"`."},{"t":"li","v":"cause timeout 8000ms → 45s + `CAUSE_INLINE_WAIT_MS = 1500` (bounded inline wait; slow calls continue in background)."},{"t":"li","v":"8 tests failed after making cause enrichment fire-and-forget → introduced bounded inline wait instead of reverting."},{"t":"li","v":"Thinking column empty on app start: root cause = prepared cold-read never calls `apply` + `sessions.get(id)` undefined for unpublished sessions + `stateVersion` not bumped. Fixed with `stateVersion 1→2` (forces full replay) + `derive` fallback. Confirmed: `blockedAt: null`, `servedUpdatedAt: 1791512701187`, `fold.applies: 8756`."},{"t":"li","v":"Diagnostics file was a single global file overwritten by whichever session ran last (showed `milestones: 1`, `llmSeam: \"none\"` from another session). Fixed → per-session `<sessionId>.diagnostics.json`."},{"t":"li","v":"`cause` fabricated causes when the request sent only `{序号, 轮次, 标题}`. Fixed by adding 120-char `detail` excerpts + instruction permitting 「原因不明」. Verified live."},{"t":"li","v":"`cordis.patch.yml` was rewritten to 28 lines at **2026/10/8 17:17:21 (app startup)**, NOT by `set_bundle` (my re-activations verified byte-identical each time). Restored from a 267-line backup."},{"t":"li","v":"Bundle count reported 10 vs an earlier recorded 11; `package.json` mtime matches the `set_bundle` moment. Unresolved — user asked to check the plugin list."}]},{"h":"Pending Jobs","items":[{"t":"li","v":"**`cause` backfill has the SAME root cause as L2** (`CAUSE_MAX_TOKENS = 4096`, diagnostics showed `0 chars`): needs the same treatment (carry a reasoning-effort level + retry-on-reject). Subagent deliberately did not touch it; suggested renaming the key to `internalCallReasoningEffort` and governing both paths. **`l2ReasoningEffort` has never been in any patch, so renaming is zero-migration.**"},{"t":"li","v":"cause quality: 「原因不明」 accounts for nearly half of entries; occasional wrong excerpts (entry 8 grabbed \"dummy key\", entry 18 grabbed \"禁用后预设又消失\"). Possible fix: excerpt 200–300 chars, or prefer conclusion sentences over the opening."},{"t":"li","v":"L3 record list still shows the whole library and each record lacks a sessionId (other sessions' \"第 3 轮\" looks like this session's)."},{"t":"li","v":"`src/client.js` GROUPS do not expose the `mainline*` or `l2ReasoningEffort` keys (client.js was off-limits); they must be set via the patch's `config:`."}]},{"h":"Current Work","items":[{"t":"li","v":"Deployed **v0.1.18** (177 tests, 75/75 contract) and re-activated via `set_bundle false → true`; patch verified byte-identical (267 lines)."},{"t":"li","v":"Confirmed L2 fix live via `session-5b59b635-...diagnostics.json`: `\"via\": \"llm\"`, `\"truncated\": false`, `\"failure\": null`, `attempt.finish: \"stop\"`, `outputChars: 2077`, `usage.outputTokens: 1776`, `reasoningEffort: \"low\"`, `effortRetry: false`, `mainline: {milestones: 52, causeFailure: null}`."},{"t":"li","v":"User replied **\"修复剩余问题\"** (fix the remaining problems) — i.e. proceed with the pending items above."}]},{"h":"Next Step","items":[{"t":"li","v":"Fix the `cause` backfill path (same root cause as L2): rename `l2ReasoningEffort` → `internalCallReasoningEffort` and apply the reasoning-effort level + retry-on-reject to both the L2 digest call and the cause call; then add tests, `npm run verify`, bump version, `node scripts/deploy.mjs`, re-activate, verify patch MD5 unchanged."}]},{"h":"Critical Context","items":[{"t":"li","v":"Self-update flow (standard): bump version → `npm run verify` → `npm pack` → copy tgz to `<profile>\\vendor\\` → `node scripts/deploy.mjs` → back up `cordis.patch.yml` → `set_bundle false` → `set_bundle true` → verify patch MD5 unchanged. **Never** use `dsh plugin add`/reinstall."},{"t":"li","v":"Subagents are **not addressable** via `send_message`; spawn fresh ones. Subagents must NOT deploy or bump versions — that is the Lead's job."},{"t":"li","v":"Reading `package.json` once can catch a transient mid-write state — read twice before concluding."},{"t":"li","v":"Compatibility verdicts must be checked against the **installed** 0.2.0-rc.2, not the older checkout."},{"t":"li","v":"Config must stay flat top-level scalars (`SettingsScope.set(field, value)` only writes scalars); the host settings schema must declare every key or panel saves silently reset it."},{"t":"li","v":"Anti-regression gates: client `inject` must stay `[\"slots\",\"locale\"]`; `lib/entry.js` `inject` must be `[]`; mainline must bypass `arbitrateInjection`; `selectPrunable` must exempt milestones; L1 body must read both content locations."},{"t":"li","v":"Verified numbers: reference session (`session-e47420b3`, dsh-live2d, 6.8MB/11,424 events/54 turns) → 54 milestones/1,821 tokens; current session (`session-5b59b635`) → 52 milestones."},{"t":"li","v":"Extraction quality: goal oscillation 10→4 entries; tool-description/error titles → 0; `第 8–11 轮: 连续 4 轮被用户中止` deliberately preserved."},{"t":"li","v":"The plugin has had **four** silent \"looks-like-it-works-but-doesn't\" failures (`readEvents`, L1 token estimate, diagnostics file scope, projection cold-read). Standing instruction to subagents: \"骗我一次比晚交付一小时代价大得多\" — report evidence, not \"should be fixed\"."},{"t":"li","v":"Goal `goal-0bebba54-d8e1-4e2c-8ee4-f5d2a1231418` remains paused; its original objective (deep-fusing `dsh-argp`/`dsh-headroom`/`dsh-memory-vault`/`dsh-mcp-lens`) was deliberately dropped."}]}]},"l3":{"backend":"sqlite","count":848,"tokens":73227,"sessionCount":749,"sessionTokens":66449,"viewRecords":200,"shownRecords":72,"droppedRecords":128,"sessionTotal":23,"kindQuota":{"milestone":null,"digest":null,"turn":56},"groups":[{"sessionId":"session-5b59b635-915f-439d-bd73-a2da6543db8a","own":true,"shown":64,"count":749,"tokens":66449,"records":[{"id":"l3-mv1qct9r-1h","kind":"milestone","kindLabel":"里程碑","turnFrom":80,"turnTo":80,"tokens":27,"text":"第 80 轮: 我创建一个之后你git上去，这个选项怎么选 — 原因不明","createdAt":1791596596527},{"id":"l3-mv1qct8y-1g","kind":"turn","kindLabel":"轮次","turnFrom":49,"turnTo":49,"tokens":99,"text":"## 任务主线\n- turn 49: 根据建议和优先级完成 Time sampled while preparing turn 49, step 1: 2026-10-07T18:43:06+08:00[Asia/Shanghai]\n\n## 已完成的子任务\n- turn 49: 两件事：恢复那两个 bundle，同时开始优先级 2。\n\n## 关键决策与依据\n- 涉及的工具：write, pwsh, subagent\n\n## 未决问题\n- (none)","createdAt":1791596596498},{"id":"l3-mv1q6wk8-1f","kind":"milestone","kindLabel":"里程碑","turnFrom":79,"turnTo":79,"tokens":17,"text":"第 79 轮: 按 skill 流程 — 用户指定用该skill","createdAt":1791596320856},{"id":"l3-mv1q6wji-1e","kind":"turn","kindLabel":"轮次","turnFrom":48,"turnTo":48,"tokens":92,"text":"## 任务主线\n- turn 48: Agent 5958c295-2b9b-4766-9b6a-f55ab34d91a1 sent a message: \n\n## 已完成的子任务\n- turn 48: 优先级 1 完成：**109 项测试全绿**（+4），两个会话的前后对比也做了。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, plugin_manager\n\n## 未决问题\n- (none)","createdAt":1791596320830},{"id":"l3-mv1puhqz-1d","kind":"turn","kindLabel":"轮次","turnFrom":47,"turnTo":47,"tokens":132,"text":"## 任务主线\n- turn 47: 继续按优先级完成，同时你要自更新插件，不要让我来，因为我每次删除重装的时候思维栏里面的可视化内容会消失，同时你安装的时候要避免兼容性问题\n\n## 已完成的子任务\n- turn 47: 明白——**我自己更新，你不用动手**。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, write, subagent, edit\n\n## 未决问题\n- (none)","createdAt":1791595741787},{"id":"l3-mv1puhqj-1c","kind":"turn","kindLabel":"轮次","turnFrom":46,"turnTo":46,"tokens":72,"text":"## 任务主线\n- turn 46: 先做c，在做a # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 46: 做 C——查清参考会话多出的 3 条。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741771},{"id":"l3-mv1puhq5-1b","kind":"turn","kindLabel":"轮次","turnFrom":45,"turnTo":45,"tokens":83,"text":"## 任务主线\n- turn 45: 刚才网络卡住了，继续任务 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 45: 子代理中途失败了，而且用户说网络卡住。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741757},{"id":"l3-mv1puhpq-1a","kind":"turn","kindLabel":"轮次","turnFrom":44,"turnTo":44,"tokens":64,"text":"## 任务主线\n- turn 44: 刚才网络卡住了，继续任务 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741742},{"id":"l3-mv1puhp7-19","kind":"turn","kindLabel":"轮次","turnFrom":43,"turnTo":43,"tokens":63,"text":"## 任务主线\n- turn 43: Background subagent 2237f289-3310-4e54-a87f-8fa20be96521 failed before it finished.\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741723},{"id":"l3-mv1puhop-18","kind":"turn","kindLabel":"轮次","turnFrom":42,"turnTo":42,"tokens":61,"text":"## 任务主线\n- turn 42: 先做第一个 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 42: 明白。\n\n## 关键决策与依据\n- 涉及的工具：subagent\n\n## 未决问题\n- (none)","createdAt":1791595741705},{"id":"l3-mv1puho8-17","kind":"turn","kindLabel":"轮次","turnFrom":41,"turnTo":41,"tokens":141,"text":"## 任务主线\n- turn 41: 还有什么没有完成。 Time sampled while preparing turn 41, step 1: 2026-10-07T15:47:55+08:00[Asia/Shanghai]\n\n## 已完成的子任务\n- turn 41: 先说好消息：**L1 段回来了**（\"保留窗口：最近 8 轮（turn 34–41），共 42 轮\"），骨架也有 40 条了——`readEvents` 那个致命修复确实生效了，整条链路现在是真的在跑。\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741688},{"id":"l3-mv1puhns-16","kind":"turn","kindLabel":"轮次","turnFrom":40,"turnTo":40,"tokens":96,"text":"## 任务主线\n- turn 40: Agent d6cff729-f8e6-4467-b94f-a3eba9194efa sent a message: \n\n## 已完成的子任务\n- turn 40: **这份报告里有一个致命发现**——子代理找到 `readEvents(session)` 在本 DSH 上恒返回 `[]`。\n\n## 关键决策与依据\n- 涉及的工具：grep, read, pwsh, edit\n\n## 未决问题\n- (none)","createdAt":1791595741672},{"id":"l3-mv1puhnb-15","kind":"turn","kindLabel":"轮次","turnFrom":39,"turnTo":39,"tokens":92,"text":"## 任务主线\n- turn 39: a，0.1.5我已经装上了 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 39: 装上就生效了——**骨架块已经出现在投影里**（`## 里程碑主线骨架`）。\n\n## 关键决策与依据\n- 涉及的工具：subagent\n\n## 未决问题\n- (none)","createdAt":1791595741655},{"id":"l3-mv1puhmw-14","kind":"turn","kindLabel":"轮次","turnFrom":38,"turnTo":38,"tokens":84,"text":"## 任务主线\n- turn 38: Agent 434cdf94-2b23-4611-9d8c-a2281e4168ea sent a message: \n\n## 已完成的子任务\n- turn 38: 修复交付了，而且它**主动说明了改写了 4 条既有测试断言**。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741640},{"id":"l3-mv1puhmg-13","kind":"turn","kindLabel":"轮次","turnFrom":37,"turnTo":37,"tokens":125,"text":"## 任务主线\n- turn 37: Agent 7716d5c7-6aa8-4c9b-9c51-b74edafe0471 sent a message: \n\n## 已完成的子任务\n- turn 37: 接线质量很高——**还做了变异验证**（故意把 high-water mark 短路、把上限换成共用预算、去掉剪枝豁免，三条对应用例各自变红），说明测试真有牙。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, grep, read, write\n\n## 未决问题\n- (none)","createdAt":1791595741624},{"id":"l3-mv1puhm1-12","kind":"turn","kindLabel":"轮次","turnFrom":36,"turnTo":36,"tokens":72,"text":"## 任务主线\n- turn 36: B\n\n## 已完成的子任务\n- turn 36: B 收到——骨架不受预算仲裁约束，走独立的 `mainlineMaxTokens` 上限。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, subagent\n\n## 未决问题\n- (none)","createdAt":1791595741609},{"id":"l3-mv1puhlm-11","kind":"turn","kindLabel":"轮次","turnFrom":35,"turnTo":35,"tokens":111,"text":"## 任务主线\n- turn 35: Agent 72642b32-c884-4b9d-afae-cd704973181c sent a message: \n\n## 已完成的子任务\n- turn 35: 移植质量很高——**54/54 逐行完全一致**，70/70 测试全绿，四处差异都是我在任务书里点名的硬约束且实测行为中性。\n\n## 关键决策与依据\n- 涉及的工具：send_message, subagent\n\n## 未决问题\n- (none)","createdAt":1791595741594},{"id":"l3-mv1puhl6-10","kind":"turn","kindLabel":"轮次","turnFrom":34,"turnTo":34,"tokens":66,"text":"## 任务主线\n- turn 34: Agent 0fc8b43f-5480-408e-a07a-bbb3701c8a8b sent a message: \n\n## 已完成的子任务\n- turn 34: **可行性确认了。\n\n## 关键决策与依据\n- 涉及的工具：subagent\n\n## 未决问题\n- (none)","createdAt":1791595741578},{"id":"l3-mv1puhks-z","kind":"turn","kindLabel":"轮次","turnFrom":33,"turnTo":33,"tokens":97,"text":"## 任务主线\n- turn 33: Agent e0d8d90e-7985-4aba-b3e1-3185e50df464 sent a message: \n\n## 已完成的子任务\n- turn 33: 子代理交回了完整报告，其中**发现了一个我们插件的真 bug**——这个必须马上修。\n\n## 关键决策与依据\n- 涉及的工具：grep, read, edit, pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741564},{"id":"l3-mv1puhkc-y","kind":"turn","kindLabel":"轮次","turnFrom":32,"turnTo":32,"tokens":109,"text":"## 任务主线\n- turn 32: Agent 0fc8b43f-5480-408e-a07a-bbb3701c8a8b sent a message: \n\n## 已完成的子任务\n- turn 32: 这是我的疏忽——我误判了子代理 #1 已结束（`send_message` 报的 \"not found\" 是因为**子代理不是 teammate**，不代表它停了）。\n\n## 关键决策与依据\n- 涉及的工具：send_message, pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741548},{"id":"l3-mv1puhjv-x","kind":"turn","kindLabel":"轮次","turnFrom":31,"turnTo":31,"tokens":82,"text":"## 任务主线\n- turn 31: [image]\n\n## 已完成的子任务\n- turn 31: 这个截图信息量很大——**「对话 / 轨迹」就是 `conversation.\n\n## 关键决策与依据\n- 涉及的工具：cordis_inspect_query, pwsh, grep, read, send_message, subagent\n\n## 未决问题\n- (none)","createdAt":1791595741531},{"id":"l3-mv1puhji-w","kind":"turn","kindLabel":"轮次","turnFrom":30,"turnTo":30,"tokens":113,"text":"## 任务主线\n- turn 30: 1.避免三个风险，对于第一个宁可多记忆，对于第二个标题里带一句原因（+15 tokens/条），对于迪桑按事件\n\n## 已完成的子任务\n- turn 30: 三条都记下了。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, write, subagent, cordis_inspect_list, cordis_inspect_query, grep, read\n\n## 未决问题\n- (none)","createdAt":1791595741518},{"id":"l3-mv1puhj4-v","kind":"turn","kindLabel":"轮次","turnFrom":29,"turnTo":29,"tokens":212,"text":"## 任务主线\n- turn 29: 主内容只记住关键重要变动以及任务标题（但是关于重要变动以及任务细节进入记忆网络），比如对于我们制作这个这个插件的会话来说，主内容只记住任务要求是制作这个插件，然后再某某轮会话出现了兼容性错误，错误要进入浅层或中层或深层记忆网络调取。可行性怎么样，以及对压缩的效果怎么样 Time sampled while prepar\n\n## 已完成的子任务\n- turn 29: 这个模型很清晰，而且**比我上一轮提的方案更简单也更有效**。\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741504},{"id":"l3-mv1puhio-u","kind":"turn","kindLabel":"轮次","turnFrom":28,"turnTo":28,"tokens":146,"text":"## 任务主线\n- turn 28: 遗忘的逻辑我想的是主内容不遗忘或进入记忆网络，分支内容保留主要部分，其余进入记忆网络，每轮对话的细节部分进入记忆网络，按需取回\n\n## 已完成的子任务\n- turn 28: 这个模型比现在的实现**聪明得多**——现在是纯按时间滑窗，你描述的是**按内容角色**分层。\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741488},{"id":"l3-mv1puhib-t","kind":"turn","kindLabel":"轮次","turnFrom":27,"turnTo":27,"tokens":60,"text":"## 任务主线\n- turn 27: 有遗忘部分和按需取回吗\n\n## 已完成的子任务\n- turn 27: 核心问题。\n\n## 关键决策与依据\n- 涉及的工具：grep, read\n\n## 未决问题\n- (none)","createdAt":1791595741475},{"id":"l3-mv1puhhw-s","kind":"turn","kindLabel":"轮次","turnFrom":26,"turnTo":26,"tokens":84,"text":"## 任务主线\n- turn 26: 现在这个压缩逻辑启用了吗。启用时机是什么\n\n## 已完成的子任务\n- turn 26: 好问题——\"启用时机\"正是这个插件的核心机制。\n\n## 关键决策与依据\n- 涉及的工具：grep, read\n\n## 未决问题\n- (none)","createdAt":1791595741460},{"id":"l3-mv1puhhi-r","kind":"turn","kindLabel":"轮次","turnFrom":25,"turnTo":25,"tokens":139,"text":"## 任务主线\n- turn 25: 之前不是因为兼容性问题删除了几个插件吗，比如headroom等，不会导致压缩效率变低吗 Time sampled while preparing turn 25, step 1: 2026-10-07T08:35:05+08:00[Asia/Shanghai]\n\n## 已完成的子任务\n- turn 25: （顺带一提：这轮出现了 L2/L3 投影块——**说明插件已经启用并正常工作了**。\n\n## 关键决策与依据\n- 涉及的工具：cordis_inspect_query, pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741446},{"id":"l3-mv1puhh4-q","kind":"turn","kindLabel":"轮次","turnFrom":24,"turnTo":24,"tokens":74,"text":"## 任务主线\n- turn 24: 你好 Time sampled while preparing turn 24, step 1: 2026-10-07T07:53:24+08:00[Asia/Shanghai]\n\n## 已完成的子任务\n- turn 24: 你好。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, live2d_express\n\n## 未决问题\n- (none)","createdAt":1791595741432},{"id":"l3-mv1puhgo-p","kind":"turn","kindLabel":"轮次","turnFrom":23,"turnTo":23,"tokens":42,"text":"## 任务主线\n- (none)\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741416},{"id":"l3-mv1puhg9-o","kind":"turn","kindLabel":"轮次","turnFrom":22,"turnTo":22,"tokens":156,"text":"## 任务主线\n- turn 22: 我可以不通过pwsh -File D:\\deepseek\\deepseekh_work\\plugins\\dsh-tri-layer-memory\\profile-recovery\\install.ps1安装，可以再dsh的插件列表里面输入github仓库地址或是本地文件位置安装。安装不上代表又问题。同时现在我的新会话预\n\n## 已完成的子任务\n- turn 22: 明白，用插件列表 UI 安装才是正路——`安装不上代表有问题`，你说得对。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741401},{"id":"l3-mv1puhfv-n","kind":"turn","kindLabel":"轮次","turnFrom":21,"turnTo":21,"tokens":59,"text":"## 任务主线\n- turn 21: 你跑一半死了\n\n## 已完成的子任务\n- turn 21: 抱歉，继续。\n\n## 关键决策与依据\n- 涉及的工具：edit, read, grep, pwsh\n\n## 未决问题\n- (none)","createdAt":1791595741387},{"id":"l3-mv1puhff-m","kind":"turn","kindLabel":"轮次","turnFrom":20,"turnTo":20,"tokens":69,"text":"## 任务主线\n- turn 20: [image]\n\n## 已完成的子任务\n- turn 20: **找到了确凿原因**，而且是我的插件造成的。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, grep, read, edit\n\n## 未决问题\n- (none)","createdAt":1791595741371},{"id":"l3-mv1puhex-l","kind":"turn","kindLabel":"轮次","turnFrom":19,"turnTo":19,"tokens":144,"text":"## 任务主线\n- turn 19: 现在新会话有模式了，一切正常，继续插件任务，避免兼容性问题，整合为一个插件，同时不用考虑web端 The approval policy changed from \"never\" to \"ask\" (changed by the user). Current runtime context. This snapshot\n\n## 已完成的子任务\n- turn 19: 环境恢复正常，太好了。\n\n## 关键决策与依据\n- 涉及的工具：read, grep, plugin_manager, cordis_inspect_query, write, pwsh, present\n\n## 未决问题\n- (none)","createdAt":1791595741353},{"id":"l3-mv1puhei-k","kind":"turn","kindLabel":"轮次","turnFrom":18,"turnTo":18,"tokens":51,"text":"## 任务主线\n- turn 18: 走方案a\n\n## 已完成的子任务\n- turn 18: 方案 A。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, write\n\n## 未决问题\n- (none)","createdAt":1791595741338},{"id":"l3-mv1puhe3-j","kind":"turn","kindLabel":"轮次","turnFrom":17,"turnTo":17,"tokens":77,"text":"## 任务主线\n- turn 17: 1.目标还要继续吗？\n\n## 已完成的子任务\n- turn 17: 我先不动任何东西，只做只读勘查，然后把方案给你。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, read\n\n## 未决问题\n- (none)","createdAt":1791595741323},{"id":"l3-mv1puhdq-i","kind":"turn","kindLabel":"轮次","turnFrom":16,"turnTo":16,"tokens":51,"text":"## 任务主线\n- turn 16: 1.目标还要继续吗？\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741310},{"id":"l3-mv1puhdd-h","kind":"turn","kindLabel":"轮次","turnFrom":15,"turnTo":15,"tokens":137,"text":"## 任务主线\n- turn 15: PowerShell 7.6.6\n\n## 已完成的子任务\n- turn 15: 两件事：脚本有个真 bug（`$env:DSH_HOME` 在你的普通 PowerShell 会话里是空的，它只在 DSH 自己的 shell 里有），以及你的新要求——**整合成一个可独立开关的插件，不带任何会引发兼容性问题的依赖**。\n\n## 关键决策与依据\n- 涉及的工具：edit, read, write, grep, pwsh, present\n\n## 未决问题\n- (none)","createdAt":1791595741297},{"id":"l3-mv1puhcz-g","kind":"turn","kindLabel":"轮次","turnFrom":14,"turnTo":14,"tokens":46,"text":"## 任务主线\n- turn 14: <goal_round>\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741283},{"id":"l3-mv1puhcl-f","kind":"turn","kindLabel":"轮次","turnFrom":13,"turnTo":13,"tokens":65,"text":"## 任务主线\n- turn 13: <goal_round>\n\n## 已完成的子任务\n- turn 13: 我停下来了。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, write, ask_user_question, edit, read, grep, present\n\n## 未决问题\n- (none)","createdAt":1791595741269},{"id":"l3-mv1puhc8-e","kind":"turn","kindLabel":"轮次","turnFrom":12,"turnTo":12,"tokens":58,"text":"## 任务主线\n- turn 12: 1.再插件列表中有很多新添的有报错\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741256},{"id":"l3-mv1puhbu-d","kind":"turn","kindLabel":"轮次","turnFrom":11,"turnTo":11,"tokens":75,"text":"## 任务主线\n- turn 11: 1.再插件列表中有很多新添的有报错\n\n## 已完成的子任务\n- turn 11: 抱歉——你说得对。\n\n## 关键决策与依据\n- 涉及的工具：get_goal, pwsh, plugin_manager, read, edit\n\n## 未决问题\n- (none)","createdAt":1791595741242},{"id":"l3-mv1puhbi-c","kind":"turn","kindLabel":"轮次","turnFrom":10,"turnTo":10,"tokens":46,"text":"## 任务主线\n- turn 10: <goal_round>\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741230},{"id":"l3-mv1puhb4-b","kind":"turn","kindLabel":"轮次","turnFrom":9,"turnTo":9,"tokens":53,"text":"## 任务主线\n- turn 9: [image]\n\n## 已完成的子任务\n- turn 9: 收到。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, read, edit, job_output\n\n## 未决问题\n- (none)","createdAt":1791595741216},{"id":"l3-mv1puhar-a","kind":"turn","kindLabel":"轮次","turnFrom":8,"turnTo":8,"tokens":54,"text":"## 任务主线\n- turn 8: <goal_round>\n\n## 已完成的子任务\n- turn 8: 三轮没等到回复。\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791595741203},{"id":"l3-mv1puhae-9","kind":"turn","kindLabel":"轮次","turnFrom":7,"turnTo":7,"tokens":58,"text":"## 任务主线\n- turn 7: <goal_round>\n\n## 已完成的子任务\n- turn 7: 用户还没回复。\n\n## 关键决策与依据\n- 涉及的工具：grep, pwsh, job_output, edit\n\n## 未决问题\n- (none)","createdAt":1791595741190},{"id":"l3-mv1puha1-8","kind":"turn","kindLabel":"轮次","turnFrom":6,"turnTo":6,"tokens":85,"text":"## 任务主线\n- turn 6: <goal_round>\n\n## 已完成的子任务\n- turn 6: 用户还没回答，那我把这一轮用在一个**从未被执行过**的交付物上：客户端半边。\n\n## 关键决策与依据\n- 涉及的工具：write, pwsh, edit\n\n## 未决问题\n- (none)","createdAt":1791595741177},{"id":"l3-mv1puh9o-7","kind":"turn","kindLabel":"轮次","turnFrom":5,"turnTo":5,"tokens":100,"text":"## 任务主线\n- turn 5: <goal_round>\n\n## 已完成的子任务\n- turn 5: 用户还没回答我的问题，那我把这个问题**查清楚**——这是只读调查，能把决定权交还给用户时带上确凿依据。\n\n## 关键决策与依据\n- 涉及的工具：grep, read, pwsh, edit, present\n\n## 未决问题\n- (none)","createdAt":1791595741164},{"id":"l3-mv1puh9b-6","kind":"turn","kindLabel":"轮次","turnFrom":4,"turnTo":4,"tokens":98,"text":"## 任务主线\n- turn 4: <goal_round>\n\n## 已完成的子任务\n- turn 4: 本轮做能离线验证的 Phase 2 工作：**真正加载得起来的两个社区组件**（`dsh-memory-vault`、`dsh-mcp-lens`）的深度集成。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, grep, read, write, edit\n\n## 未决问题\n- (none)","createdAt":1791595741151},{"id":"l3-mv1puh8x-5","kind":"turn","kindLabel":"轮次","turnFrom":3,"turnTo":3,"tokens":114,"text":"## 任务主线\n- turn 3: <goal_round>\n\n## 已完成的子任务\n- turn 3: 我先试一个还没用过的杠杆：`set_bundle` 报 `changed: false` 时不重挂，那就制造一次**真实的**变更——先停用整个 bundle 让行卸载，再启用让它重新挂载。\n\n## 关键决策与依据\n- 涉及的工具：pwsh, plugin_manager, edit, write\n\n## 未决问题\n- (none)","createdAt":1791595741137},{"id":"l3-mv1puh8k-4","kind":"turn","kindLabel":"轮次","turnFrom":2,"turnTo":2,"tokens":95,"text":"## 任务主线\n- turn 2: <goal_round>\n\n## 已完成的子任务\n- turn 2: 我还有一个杠杆没用：本工作区里的 `dsh-live2d` 正是用\"带时间戳的动态 import\"绕开 ESM 缓存的。\n\n## 关键决策与依据\n- 涉及的工具：read, write, edit, pwsh, grep, plugin_manager\n\n## 未决问题\n- (none)","createdAt":1791595741124},{"id":"l3-mv1puh87-3","kind":"turn","kindLabel":"轮次","turnFrom":1,"turnTo":1,"tokens":156,"text":"## 任务主线\n- turn 1: 我要在 DeepSeek Harness 中创建一个新的插件，名为 “三层记忆压缩引擎”，英文名 dsh-tri-layer-memory。\n\n## 已完成的子任务\n- turn 1: 我先做一次实地勘察：确认工作目录、DSH 的插件契约（Host 插件、`ctx.\n\n## 关键决策与依据\n- 涉及的工具：pwsh, cordis_inspect_list, read, glob, subagent, create_goal, list_agents, grep, write, edit, live2d_express, present, ask_user_question, job_output, plugin_manager, cordis_inspect_query\n\n## 未决问题\n- (none)","createdAt":1791595741111},{"id":"l3-mv1nk5ug-1d","kind":"digest","kindLabel":"摘要","turnFrom":44,"turnTo":67,"tokens":1059,"text":"## 任务主线\n- 为 DSH 构建全局插件 `dsh-tri-layer-memory`（三层记忆压缩引擎）：L1 原文 8 轮 + L2 LLM 摘要 24 轮 + L3 sqlite 按需 recall；主内容只留任务标题+关键变动，细节进记忆网络；附里程碑骨架、思维栏可视化、可引用。\n- 用户要求助手**自更新插件**（不删装，避免思维栏可视化丢失）、避免兼容性问题。\n\n## 已完成的子任务\n- 自更新路径：`scripts/deploy.mjs` 原地覆盖 6 文件 + `plugin_manager` toggle `set_bundle false→true`；`cordis.patch.yml` MD5 `03B48C9F…` 逐字节相同（267 行），无需重启进程。\n- 优先级 1（长消息标题）：`stripInjections` 剥离时间采样/`Current runtime context`/`# 三层记忆 · 本轮投影`；列表概括成「提出 N 项要求」；`clipUnit` 落在语义单元末尾。109 测试。\n- 优先级 2（cause）：LLM 补因果，`mainlineCauseMinBatch=3`，请求带 `detail` 120 字摘录（`mainlineCauseExcerptChars` 0–500，0=旧行为），指令允许「原因不明」。145→177 测试。\n- 优先级 3：README 371→712 行；33 键机械核对，键数/默认值 33/33 一致，14 数值范围实测。\n- 优先级 4（可引用）：用平台现成 `inputActions.setDraft` + `useInput(s=>s.draft)`，零新增协议。\n- 优先级 5：L3 面板分「本会话 / 整库」口径（`stateVersion 1→2`）；`apply` 不再限轮边界；L2 截断说明改为点名 `includeDigest: true`（更短否则整块被丢）。\n- 修 `estimateTokens(String(charCount))`（`约 2` → `91418`）；诊断文件按会话隔离 `<sessionId>.diagnostics.json`；`hydration` 独立 `<sessionId>.hydrate.json`。\n- 思维栏启动即空根因：prepared 冷读检查点总在日志末尾 → `apply` 零调用、`sessions.get(id)` 恒 undefined、`session/created` 晚于第一帧；修法 `stateVersion 1→2` + `derive` 兜底。诊断 `servedUpdatedAt>0`、`applies:8756`。\n- L2 回退根因：`reasoningEffort:max` 与正文共享 `max_tokens`；本模型 `deepseek-v4.1-flash` `off=null` 不可选 → 默认不阻断思考；插件又「因不完美整份丢弃」。改为三态 `ok/truncated/failed`，仅正文为空才回退；`trimAtBoundary`。真机 `finish:\"stop\"`, `outputChars:2077`, `outputTokens:1776`, `reasoningEffort:\"low\"`。\n\n## 关键决策与依据\n- 键改名 `l2ReasoningEffort` → `internalCallReasoningEffort`（尚未进任何 patch，零迁移成本）。\n- 抽出共用 `callWithEffortRetry(llm, buildRequest, effort)`；L2 与 cause **共用一份**——各自实现已导致「L2 通、cause 静默失效」。\n- 补算走只读 `extractMilestones`，**不走 `refreshMainline`**（后者推进会跳过首轮 cause 回填）。\n- 改折叠语义必须 bump `stateVersion`，否则旧行被当可用行前向应用 → 修复完全不生效（前一轮教训）。\n- 保留「原因不明」为诚实行为，只减少其出现场合，不逼模型必须给答案。\n\n## 未决问题\n- cause 摘录质量：任务 2 在跑；「原因不明」近半，且偶抓错摘录（第 8 条「dummy key」、第 18 条「禁用后预设又消失」），疑应取结论句而非开头。\n- 任务 3：L3 记录列表仍整库、每条不带 sessionId，别的会话「第 3 轮」看着像本会话。\n- 真机确认 `mainline.causeAttempt`：`finish:\"stop\"`、`outputChars>0`、`effortRetry:false`（尚未部署验证）。\n- `usage` 必须作为独立 chunk `{type:'usage',usage}` 发，塞进 `finish.reason` 会被 TextAssembler 静默忽略。","createdAt":1791591900568},{"id":"l3-mv1njain-1c","kind":"turn","kindLabel":"轮次","turnFrom":46,"turnTo":46,"tokens":72,"text":"## 任务主线\n- turn 46: 先做c，在做a # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 46: 做 C——查清参考会话多出的 3 条。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791591859967},{"id":"l3-mv1my2tn-1a","kind":"milestone","kindLabel":"里程碑","turnFrom":76,"turnTo":76,"tokens":22,"text":"第 76 轮: 还有什么问题为解决，重要吗 — 原因不明","createdAt":1791590870219},{"id":"l3-mv1my2su-19","kind":"turn","kindLabel":"轮次","turnFrom":45,"turnTo":45,"tokens":83,"text":"## 任务主线\n- turn 45: 刚才网络卡住了，继续任务 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 45: 子代理中途失败了，而且用户说网络卡住。\n\n## 关键决策与依据\n- 涉及的工具：pwsh\n\n## 未决问题\n- (none)","createdAt":1791590870190},{"id":"l3-mv1mdctr-18","kind":"turn","kindLabel":"轮次","turnFrom":44,"turnTo":44,"tokens":64,"text":"## 任务主线\n- turn 44: 刚才网络卡住了，继续任务 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791589903407},{"id":"l3-mv1kcoxk-17","kind":"turn","kindLabel":"轮次","turnFrom":43,"turnTo":43,"tokens":63,"text":"## 任务主线\n- turn 43: Background subagent 2237f289-3310-4e54-a87f-8fa20be96521 failed before it finished.\n\n## 已完成的子任务\n- (none)\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791586513208},{"id":"l3-mv1kcoxe-16","kind":"turn","kindLabel":"轮次","turnFrom":42,"turnTo":42,"tokens":61,"text":"## 任务主线\n- turn 42: 先做第一个 # 三层记忆 · 本轮投影\n\n## 已完成的子任务\n- turn 42: 明白。\n\n## 关键决策与依据\n- 涉及的工具：subagent\n\n## 未决问题\n- (none)","createdAt":1791586513202},{"id":"l3-mv1kcox6-15","kind":"turn","kindLabel":"轮次","turnFrom":41,"turnTo":41,"tokens":141,"text":"## 任务主线\n- turn 41: 还有什么没有完成。 Time sampled while preparing turn 41, step 1: 2026-10-07T15:47:55+08:00[Asia/Shanghai]\n\n## 已完成的子任务\n- turn 41: 先说好消息：**L1 段回来了**（\"保留窗口：最近 8 轮（turn 34–41），共 42 轮\"），骨架也有 40 条了——`readEvents` 那个致命修复确实生效了，整条链路现在是真的在跑。\n\n## 关键决策与依据\n- 涉及的工具：(none)\n\n## 未决问题\n- (none)","createdAt":1791586513194},{"id":"l3-mv1kcox0-14","kind":"turn","kindLabel":"轮次","turnFrom":40,"turnTo":40,"tokens":96,"text":"## 任务主线\n- turn 40: Agent d6cff729-f8e6-4467-b94f-a3eba9194efa sent a message: \n\n## 已完成的子任务\n- turn 40: **这份报告里有一个致命发现**——子代理找到 `readEvents(session)` 在本 DSH 上恒返回 `[]`。\n\n## 关键决策与依据\n- 涉及的工具：grep, read, pwsh, edit\n\n## 未决问题\n- (none)","createdAt":1791586513188},{"id":"l3-mv1k9x6l-19","kind":"milestone","kindLabel":"里程碑","turnFrom":74,"turnTo":74,"tokens":32,"text":"第 74 轮: 继续处理，dsh-bingbingbing是我下的一个插件 — 插件兼容性问题已删除","createdAt":1791586383933},{"id":"l3-mv0wc2am-19","kind":"digest","kindLabel":"摘要","turnFrom":39,"turnTo":62,"tokens":902,"text":"## 任务主线\n- 目标：构建 DSH 全局插件 `dsh-tri-layer-memory`（三层记忆压缩引擎），L1 原文/ L2 摘要/ L3 按需 recall；主内容只留任务标题+关键变动，细节进记忆网络。\n- 用户要求：在「对话/轨迹」旁加「思维栏」；插件由助手自更新，用户不手动删装；更新须避免兼容性问题。\n- 优先级：1 长消息概括 → 2 `cause` 因果 → 3 README → 4 可引用 → 5 三个口径问题；完成后修「思维栏打开 DSH 为空」。\n\n## 已完成的子任务\n- v0.1.6 思维栏：`conversation.view` id `memory` order 20；`useProjection('tri-layer-memory')`；客户端 `inject` 仍 `[\"slots\",\"locale\"]`。\n- 致命修复：`readEvents` 原只读 `session.events`，DSH 0.2.0-rc.2 只有 `snapshotEvents()`；已加退路 + 回归测试，变异验证有牙。\n- 噪音修复 v0.1.7：目标生命周期 10→4；工具描述/报错标题 5~6→0；测试 96→105。\n- cause 字段 v0.1.9：独立节流可降级 LLM 调用；因请求无 detail 曾编造，后加 `mainlineCauseExcerptChars=120` 摘录，145 测试。\n- L1 token bug：`estimateTokens(String(charCount))` 使渲染“约 2 tokens”；改为投影时累计真实文本，130 测试，现值约 117035–188422。\n- L2 退回 extractive：根因 `reasoningEffort:max` 吃光输出预算（`l2MaxSummaryTokens=1024`、`CAUSE_MAX_TOKENS=512`）；提高后曾 `via=llm`，后 4096 又不够。\n- v0.1.16 四项：可引用用平台 `inputActions.setDraft` + `useInput`；L3 新增 `sessionCount/libraryCount`，`stateVersion: 0→1`；半轮延迟改 feed 变即折；截断说明改 `includeDigest: true`。155 测试。\n- 自更新：`scripts/deploy.mjs` 原地覆盖 `lib/*` + 重新激活；`cordis.patch.yml` MD5 `03B48C9F…` 逐字节保持，267 行预设完好。\n- README 371→712 行；33 配置键机械核对，默认值/范围 33/33 一致。\n\n## 关键决策与依据\n- 不用 `exports.inject` 硬依赖（缺席会 fiber pending、宿主拒启动）；一律 `ctx.inject([...], cb)` 软等待。\n- 不跑 pnpm、不动 manifest/组合树，避免 `ERR_PNPM_EPERM`、bundle 截断、patch 被 `tree.write()` 抹掉。\n- 诊断改按会话隔离（`<sessionId>.diagnostics.json`），全局单文件曾被别的会话覆盖导致误判。\n- 自更新后如 patch 被应用启动重写，用备份恢复；重启使预设生效。\n- 可引用不自造协议，用 `conversation.view` standardProps 已有机制。\n\n## 未决问题\n- **思维栏启动仍为空**：`session/created` + `hydrate(sessionId)` 两条补算路径未走通；需先加观察面（注册/触发/`ctx.get('sessions')`/feed 写入）。\n- L2 仍 extractive：4096 上限不足以覆盖 24 轮；需继续调/换策略。\n- cause 近一半「原因不明」且摘录 120 字有噪音；可考虑 200–300 字或取结论句。\n- L3 记录列表仍整库且条目不带 sessionId，跨会话轮次易误读。\n- bundle 列表 10 vs 记录 11 项不一致，待用户看插件列表确认。","createdAt":1791546173086},{"id":"l3-mv0w9ucg-17","kind":"milestone","kindLabel":"里程碑","turnFrom":71,"turnTo":71,"tokens":19,"text":"第 71 轮: 完成未完成的三件事情 — 原因不明","createdAt":1791546069472},{"id":"l3-mv0vg8xl-14","kind":"milestone","kindLabel":"里程碑","turnFrom":70,"turnTo":70,"tokens":18,"text":"第 70 轮: 所有任务都完成了吗 — 原因不明","createdAt":1791544688697}]},{"sessionId":"session-04fd5f9f-6e8d-4688-80f6-4e2db6dc2263","own":false,"shown":3,"count":3,"tokens":88,"records":[{"id":"l3-mv1pq05l-2","kind":"milestone","kindLabel":"里程碑","turnFrom":3,"turnTo":3,"tokens":17,"text":"第 3 轮: 缺 Python 依赖：yaml — 环境未装 pyyaml","createdAt":1791595532361},{"id":"l3-mv1pq05e-1","kind":"milestone","kindLabel":"里程碑","turnFrom":2,"turnTo":2,"tokens":39,"text":"第 2 轮: 你这一测直接把病因钉死了 —— 两个预设的 skill-filesystem… — 两个预设未在创造模式加载","createdAt":1791595532354},{"id":"l3-mv1oie20-1e","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":32,"text":"第 1 轮: 为什么我安装了这个设计插件，但是按/的时候却没有 — 原因不明","createdAt":1791593497512}]},{"sessionId":"5632ae69-4d0d-4e96-8014-722d5829ee48","own":false,"shown":1,"count":1,"tokens":33,"records":[{"id":"l3-mv1myj0v-1b","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":33,"text":"第 1 轮: 报告 命令行输出，提出 4 项要求：找到判据 读 `src/host… — 会话初始任务","createdAt":1791590891215}]},{"sessionId":"5d536922-1808-47d7-85aa-bf413eecf0b0","own":false,"shown":1,"count":1,"tokens":31,"records":[{"id":"l3-mv0vkyrm-15","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":31,"text":"第 1 轮: 提出 4 项要求：这两次重写**是不是同一个机制** — 会话初始任务","createdAt":1791544908802}]},{"sessionId":"cfd202a4-90c4-4c93-b4d1-219d54de9785","own":false,"shown":1,"count":1,"tokens":30,"records":[{"id":"l3-mv1qkli3-1i","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":30,"text":"第 1 轮: 用 `…，提出 4 项要求：**任务标题** — 一行文本 — 会话初始任务","createdAt":1791596959707}]},{"sessionId":"6964ce0f-a0e8-47e3-8fec-7df0d315d946","own":false,"shown":1,"count":1,"tokens":28,"records":[{"id":"l3-mv1jdwx8-17","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":28,"text":"第 1 轮: 提出 3 项要求：这三条里程碑的 `detail` 里*… — 会话初始任务","createdAt":1791584890604}]},{"sessionId":"36b03731-9332-419f-a392-6e8939e0c636","own":false,"shown":1,"count":1,"tokens":25,"records":[{"id":"l3-mv1petsk-1f","kind":"milestone","kindLabel":"里程碑","turnFrom":1,"turnTo":1,"tokens":25,"text":"第 1 轮: This is a…，提出 3 项要求：Call the `skill`… — 会话初始任务","createdAt":1791595010900}]}]}};
+</script>
+<script>
+/* 思维栏 v0 — 运行时（无依赖）。数据全部来自内联的 DATA。 */
+(function () {
+  'use strict';
+  var DATA = window.__TLM__;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var root = document.documentElement;
+
+  // ── 状态 ────────────────────────────────────────────────────────
+  var S = {
+    group: 'turn',      // turn | category | none
+    bucket: 8,          // 按轮次聚类时的桶宽
+    density: 'compact', // compact | comfort
+    theme: 'dark',
+    now: true,
+    quote: 'hover',
+    tokbar: true,
+    hideNoise: false,
+    l2: 'fold',         // fold | open
+  };
+  var SAVE_KEY = 'tlm-thinking-column-v0';
+
+  function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* 隐私模式 */ } }
+  function load() {
+    try {
+      var raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return;
+      var o = JSON.parse(raw);
+      for (var k in S) if (k in o) S[k] = o[k];
+    } catch (e) { /* 坏值就用默认 */ }
+  }
+
+  function apply() {
+    root.setAttribute('data-theme', S.theme);
+    root.setAttribute('data-density', S.density === 'comfort' ? 'comfort' : 'compact');
+    root.setAttribute('data-quote', S.quote === 'always' ? 'always' : 'hover');
+    root.setAttribute('data-tokbar', S.tokbar ? 'on' : 'off');
+    root.setAttribute('data-now', S.now ? 'on' : 'off');
+  }
+
+  // ── 引用：真实实现是 inputActions.setDraft **追加**进输入框；原型里落到剪贴板 ──
+  // 失败必须说出来（对应实现的 memQuoteFailed）——一个点了没反应的按钮，在这个插件里
+  // 就是第三次"看起来在工作"的静默故障。
+  var noteTimer = null;
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) { return false }
+  }
+  function quote(label, body) {
+    var block = '[' + label + ']\n' + body;
+    function fallback() {
+      // 只试一次：user gesture 只能消费一次，重复调用必然失败
+      if (legacyCopy(block)) note('已引用 ' + label + '（回退复制；实际会追加进输入框）', false);
+      else note('引用失败：原型拿不到剪贴板（实际实现会追加进输入框）', true);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(block).then(
+        function () { note('已引用 ' + label + '（原型写入剪贴板；实际会追加进输入框）', false) },
+        fallback,
+      );
+    } else fallback();
+  }
+  function note(text, bad) {
+    var el = $('#note');
+    el.textContent = text;
+    el.classList.add('on');
+    el.style.borderColor = bad ? 'var(--error)' : 'var(--border-l2)';
+    if (noteTimer) clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { el.classList.remove('on'); }, 2600);
+  }
+
+  // ── 小工具 ──────────────────────────────────────────────────────
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  function span(from, to) {
+    return (to === undefined || to === null || to === from) ? ('第 ' + from + ' 轮') : ('第 ' + from + '–' + to + ' 轮');
+  }
+  function shortSpan(from, to) {
+    return (to === undefined || to === null || to === from) ? ('第' + from + '轮') : (from + '–' + to);
+  }
+  function fmtTokens(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+  // 内联 markdown：只处理 `code` 和 **bold**（正文一字不改）
+  function rich(text) {
+    var frag = document.createDocumentFragment();
+    var re = /(`[^`]+`|\*\*[^*]+\*\*)/g, last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var tok = m[0];
+      if (tok.charAt(0) === '`') frag.appendChild(el('code', null, tok.slice(1, -1)));
+      else frag.appendChild(el('strong', null, tok.slice(2, -2)));
+      last = m.index + tok.length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    return frag;
+  }
+
+  // ── 页头 ────────────────────────────────────────────────────────
+  function renderHead() {
+    var m = DATA.meta;
+    $('#head-title').textContent = '思维栏';
+    var meta = $('#head-meta');
+    meta.appendChild(el('span', null, '会话 '));
+    meta.appendChild(el('b', 'tnum', m.shortId));
+    meta.appendChild(el('span', null, '· 抽取于 ' + m.extractedAt.replace('T', ' ').slice(0, 19) + ' UTC'));
+    $('#head-sub').textContent = m.turnCount + ' 轮 · ' + m.events.toLocaleString() + ' 事件 · ' +
+      m.frames.toLocaleString() + ' 个 zstd 帧 · 日志 ' + (m.logBytes / 1048576).toFixed(1) + ' MB';
+    $('#head-sub').appendChild(el('code', null, '  session.v4.jsonl.zstd'));
+  }
+
+  // ── 1 · 任务标题 ────────────────────────────────────────────────
+  function renderTask() {
+    $('#task-title').textContent = DATA.taskTitle || '（尚未识别出任务标题）';
+    var btn = el('button', 'qbtn', '引用');
+    btn.type = 'button';
+    btn.title = '引用 · 任务标题';
+    btn.addEventListener('click', function () { quote('记忆引用 · 任务标题', DATA.taskTitle); });
+    $('#task-row').appendChild(btn);
+  }
+
+  // ── 2 · 骨架：分组 ──────────────────────────────────────────────
+  // 分组标签报**实际包含的轮次**，不是「最小–最大」：跨轮里程碑（如「第 8–14 轮」）
+  // 会让相邻桶的标签互相重叠（实测出现「第 1–14 轮」紧接着「第 12–17 轮」），
+  // 那种标签在扫读时会读成"这段覆盖到 14 轮"，是错的。
+  function turnLabel(turns) {
+    // 去重：多条里程碑可以同轮（实测第 1 轮有 3 条），不去重会印出「第 1、1、1–2 轮」
+    var u = [];
+    turns.forEach(function (t) { if (u.indexOf(t) < 0) u.push(t) });
+    u.sort(function (a, b) { return a - b; });
+    var runs = [], s = u[0], p = u[0];
+    for (var i = 1; i < u.length; i++) {
+      if (u[i] === p + 1) { p = u[i]; continue }
+      runs.push([s, p]); s = p = u[i];
+    }
+    runs.push([s, p]);
+    return '第 ' + runs.map(function (r) { return r[0] === r[1] ? r[0] : (r[0] + '–' + r[1]) }).join('、') + ' 轮';
+  }
+
+  function groupMainline(items) {
+    if (S.group === 'none') return [{ key: 'all', label: null, items: items }];
+    if (S.group === 'category') {
+      var order = ['任务', '目标', '转向', '决策', '指令', '交付', '验证', '压缩', '回退', '失败', '中断', '事件'];
+      var map = {};
+      items.forEach(function (it) { (map[it.category] = map[it.category] || []).push(it); });
+      return order.filter(function (c) { return map[c]; }).map(function (c) {
+        var turns = map[c].map(function (i) { return i.turn; });
+        return {
+          key: 'c-' + c, label: c, cat: c, items: map[c],
+          stat: map[c].length + ' 条 · ' + map[c].reduce(function (s, i) { return s + i.tokens; }, 0) + ' tok',
+          span: turnLabel(turns),
+          from: Math.min.apply(null, turns), to: Math.max.apply(null, turns),
+        };
+      });
+    }
+    // 按轮次聚类：桶宽 = S.bucket
+    var buckets = [], cur = null;
+    items.forEach(function (it) {
+      var b = Math.floor((it.turn - 1) / S.bucket);
+      if (!cur || cur.b !== b) { cur = { b: b, items: [] }; buckets.push(cur); }
+      cur.items.push(it);
+    });
+    return buckets.map(function (bk) {
+      var turns = bk.items.map(function (i) { return i.turn; });
+      return {
+        key: 'b-' + bk.b,
+        label: turnLabel(turns),
+        stat: bk.items.length + ' 条 · ' + bk.items.reduce(function (s, i) { return s + i.tokens; }, 0) + ' tok',
+        items: bk.items,
+        from: Math.min.apply(null, turns),
+        to: Math.max.apply(null, bk.items.map(function (i) { return i.turnTo === undefined ? i.turn : i.turnTo; })),
+      };
+    });
+  }
+
+  var MAX_ROW_TOK = Math.max.apply(null, DATA.mainline.map(function (m) { return m.tokens; }));
+
+  function renderMainline() {
+    var host = $('#mainline');
+    host.textContent = '';
+    var items = DATA.mainline.filter(function (m) { return !(S.hideNoise && (m.category === '事件' || m.category === '指令')); });
+    var groups = groupMainline(items);
+    var track = el('div', 'track');
+    var nowGroup = null;
+
+    groups.forEach(function (g) {
+      var box = el('section', 'grp');
+      var isNow = S.now && g.to !== undefined && DATA.meta.currentTurn >= g.from && DATA.meta.currentTurn <= g.to;
+      if (isNow) { box.classList.add('is-now'); nowGroup = g; }
+      var head = el('div', 'grp-head');
+      head.appendChild(el('span', 'dot'));
+      if (g.label) head.appendChild(el('span', 'span', g.label));
+      else head.appendChild(el('span', 'span', '全部 ' + g.items.length + ' 条'));
+      head.appendChild(el('span', 'stat', g.stat));
+      head.appendChild(el('span', 'bar'));
+      if (isNow) head.appendChild(el('span', 'stat', '当前'));
+      var q = el('button', 'qbtn', '引用');
+      q.type = 'button';
+      q.title = '引用 · 主线骨架 · ' + (g.label || '全部');
+      q.addEventListener('click', function () {
+        quote('记忆引用 · 主线骨架 · ' + (g.label || '全部'), g.items.map(function (i) {
+          return span(i.turn, i.turnTo) + ': ' + i.title + ' — ' + i.cause;
+        }).join('\n'));
+      });
+      head.appendChild(q);
+      box.appendChild(head);
+
+      var ol = el('ol', 'rows');
+      g.items.forEach(function (it) {
+        var isNowRow = S.now && (it.turn === DATA.meta.currentTurn || (it.turnTo !== undefined && DATA.meta.currentTurn >= it.turn && DATA.meta.currentTurn <= it.turnTo));
+        var li = el('li', 'row' + (isNowRow ? ' is-now' : ''));
+        li.tabIndex = 0;
+        li.setAttribute('data-turn', it.turn);
+
+        var anchor = el('span', 'anchor tnum');
+        anchor.appendChild(el('i', 'tick'));
+        anchor.appendChild(document.createTextNode(it.turnTo === undefined ? String(it.turn) : (it.turn + '–' + it.turnTo)));
+        li.appendChild(anchor);
+
+        var body = el('div', 'body-col');
+        var titleRow = el('div', 'row-title');
+        titleRow.appendChild(el('h4', null, it.title));
+        titleRow.appendChild(el('span', 'cat', it.category)).setAttribute('data-cat', it.category);
+        body.appendChild(titleRow);
+        body.appendChild(el('p', 'row-cause', it.cause));
+        li.appendChild(body);
+
+        var right = el('div', 'tokbar');
+        right.appendChild(el('span', 'num tnum', it.tokens));
+        var t2 = el('span', 'track2');
+        var fill = el('i', 'fill');
+        fill.style.width = Math.max(8, Math.round(it.tokens / MAX_ROW_TOK * 100)) + '%';
+        t2.appendChild(fill);
+        right.appendChild(t2);
+        var qb = el('button', 'qbtn', '引用');
+        qb.type = 'button';
+        qb.title = '引用 · ' + span(it.turn, it.turnTo) + ' · ' + it.title;
+        qb.addEventListener('click', function (e) {
+          e.stopPropagation();
+          quote('记忆引用 · 主线骨架 · ' + span(it.turn, it.turnTo), span(it.turn, it.turnTo) + ': ' + it.title + ' — ' + it.cause);
+        });
+        right.appendChild(qb);
+        li.appendChild(right);
+
+        ol.appendChild(li);
+      });
+      box.appendChild(ol);
+      track.appendChild(box);
+    });
+    host.appendChild(track);
+
+    // 定位读数：当前轮 + 覆盖范围
+    var loc = $('#locate');
+    loc.textContent = '';
+    var now = el('span', 'now', '当前 第 ' + DATA.meta.currentTurn + ' 轮');
+    loc.appendChild(now);
+    var covered = items.length ? Math.min.apply(null, items.map(function (i) { return i.turn; })) + '–' + Math.max.apply(null, items.map(function (i) { return Math.max(i.turn, i.turnTo === undefined ? i.turn : i.turnTo); })) : '—';
+    loc.appendChild(el('span', null, '骨架覆盖 ' + covered + ' 轮'));
+    loc.appendChild(el('span', null, '· 分组 ' + groups.length + ' 段'));
+    if (S.hideNoise) {
+      var hidden = DATA.mainline.length - items.length;
+      if (hidden > 0) loc.appendChild(el('span', null, '· 已折叠 ' + hidden + ' 条低信息量（指令/事件）'));
+    }    $('#mainline-stat').textContent = DATA.mainline.length + ' 条 · ' + DATA.mainlineTokens + ' tok';
+  }
+
+  // ── 3 · L2 ──────────────────────────────────────────────────────
+  function renderL2() {
+    var l2 = DATA.l2;
+    $('#l2-stat').textContent = span(l2.turnFrom, l2.turnTo) + ' · ' + l2.mode + ' · ' + l2.chars.toLocaleString() + ' 字符';
+    var q = $('#l2-quote');
+    q.addEventListener('click', function () {
+      quote('记忆引用 · L2 摘要 · ' + span(l2.turnFrom, l2.turnTo),
+        span(l2.turnFrom, l2.turnTo) + ': ' + l2.sections.map(function (s) {
+          return s.h + '\n' + s.items.map(function (i) { return '- ' + i.v; }).join('\n');
+        }).join('\n\n'));
+    });
+    $('#l2-note').textContent = '摘要遮蔽了 ' + l2.shadowedTokenCount.toLocaleString() + ' tokens（' +
+      l2.totalSummaries + ' 次压缩中的最后一次，seq ' + l2.atSeq + '）。';
+    var sum = $('#l2-sum');
+    var body = $('#l2-body');
+    var full = l2.sections;
+    var visible = S.l2 === 'open' ? full : full.slice(0, 2);
+    function draw() {
+      body.textContent = '';
+      (S.l2 === 'open' ? full : full.slice(0, 2)).forEach(function (sec) {
+        var box = el('section', 'l2-sec');
+        box.appendChild(el('h5', null, sec.h));
+        var ul = el('ul');
+        sec.items.forEach(function (it) {
+          if (it.t === 'li') { var li = el('li'); li.appendChild(rich(it.v)); ul.appendChild(li); }
+          else if (it.t === 'sub') { var li2 = el('li', 'sub'); li2.appendChild(rich(it.v)); ul.appendChild(li2); }
+          else { var p = el('p'); p.appendChild(rich(it.v)); box.appendChild(p); }
+        });
+        if (ul.children.length) box.appendChild(ul);
+        body.appendChild(box);
+      });
+      var fold = el('div', 'l2-fold');
+      var b = el('button', null, S.l2 === 'open' ? '收起，只看前 2 节' : '展开全部 ' + full.length + ' 节');
+      b.type = 'button';
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        S.l2 = S.l2 === 'open' ? 'fold' : 'open';
+        sum.open = true;
+        save(); draw();
+      });
+      fold.appendChild(b);
+      body.appendChild(fold);
+    }
+    draw();
+    sum.open = true;
+  }
+
+  // ── 4 · L3 ──────────────────────────────────────────────────────
+  function renderL3() {
+    var l3 = DATA.l3;
+    $('#l3-stat').textContent = l3.count + ' 条 / ' + fmtTokens(l3.tokens) + ' tok（整库）· 本会话 ' +
+      l3.sessionCount + ' 条 / ' + fmtTokens(l3.sessionTokens) + ' tok';
+    $('#l3-note').textContent = 'L3 是跨会话共享的库：下面按会话分组，' + l3.sessionTotal +
+      ' 个会话有记录。视图口径是整库前 ' + l3.viewRecords + ' 条；原型内联 ' + l3.shownRecords +
+      ' 条（里程碑全留，轮次摘要抽最近 ' + l3.kindQuota.turn + ' 条，略过 ' + l3.droppedRecords + ' 条）。';
+
+    var host = $('#l3');
+    host.textContent = '';
+    l3.groups.forEach(function (g) {
+      var d = el('details', 'sess');
+      d.open = g.own;
+      var sum = el('summary', 'sess-sum');
+      sum.appendChild(el('span', 'caret'));
+      sum.appendChild(el('span', 'sess-id', g.own ? (DATA.meta.shortId + '（本会话）') : g.sessionId.replace(/^session-/, '').slice(0, 8)));
+      sum.appendChild(el('span', 'badge' + (g.own ? ' own' : ''), g.own ? '本会话' : '其它会话'));
+      sum.appendChild(el('span', 'grow'));
+      sum.appendChild(el('span', 'stat tnum', '显示 ' + g.shown + ' / 库内 ' + g.count + ' 条 · ' + fmtTokens(g.tokens) + ' tok'));
+      d.appendChild(sum);
+
+      var body = el('div', 'sess-body');
+      g.records.forEach(function (r) {
+        var row = el('div', 'rec');
+        var left = el('div');
+        var meta = el('div', 'rec-meta');
+        var k = el('span', 'kind', r.kindLabel);
+        k.setAttribute('data-kind', r.kind);
+        meta.appendChild(k);
+        meta.appendChild(el('span', 'tnum', span(r.turnFrom, r.turnTo)));
+        meta.appendChild(el('span', 'tnum', r.tokens + ' tok'));
+        meta.appendChild(el('span', 'id', r.id));
+        left.appendChild(meta);
+        var p = el('p', 'rec-text');
+        // 轮次/摘要记录的正文本身是多行 markdown。**保留换行**（pre-wrap + 2 行截断），
+        // 不压平成一段：压平之后「## 任务主线」和「## 已完成的子任务」挤成一堵墙，
+        // 而它们的前两行恰好就是最该先读到的那句。
+        var lines = String(r.text).split('\n').map(function (l) { return l.replace(/\s+$/, '') }).filter(function (l) { return l.trim().length });
+        lines.forEach(function (line, i) {
+          if (i > 0) p.appendChild(document.createTextNode('\n'));
+          if (/^#/.test(line)) p.appendChild(el('span', 'h', line.replace(/^#+\s*/, '')));
+          else p.appendChild(rich(line));
+        });
+        left.appendChild(p);
+        row.appendChild(left);
+
+        var acts = el('div', 'rec-actions');
+        var tg = el('button', 'rec-toggle', '展开');
+        tg.type = 'button';
+        tg.addEventListener('click', function () {
+          row.classList.toggle('open');
+          tg.textContent = row.classList.contains('open') ? '收起' : '展开';
+        });
+        acts.appendChild(tg);
+        var qb = el('button', 'qbtn', '引用');
+        qb.type = 'button';
+        qb.title = '引用 · ' + r.id;
+        qb.addEventListener('click', function () {
+          quote('记忆引用 · L3 · ' + r.id + ' · ' + span(r.turnFrom, r.turnTo) + ' · ' + r.kind,
+            span(r.turnFrom, r.turnTo) + ' · ' + r.kind + ': ' + r.text);
+        });
+        acts.appendChild(qb);
+        row.appendChild(acts);
+        body.appendChild(row);
+      });
+      d.appendChild(body);
+      host.appendChild(d);
+    });
+  }
+
+  // ── 页脚 ────────────────────────────────────────────────────────
+  function renderFoot() {
+    var m = DATA.meta;
+    $('#foot').textContent = '数据来源：' + m.sessionId + ' 的会话日志（' + m.events.toLocaleString() + ' 事件）经插件 extractMilestones 抽取；' +
+      'L3 读自 deep-memory.sqlite 的 records 表。本页是只读设计原型，不是插件运行时。';
+  }
+
+  // ── Tweaks ──────────────────────────────────────────────────────
+  function seg(label, key, options, onChange) {
+    var f = el('div', 'tw-field');
+    f.appendChild(el('label', null, label));
+    var box = el('div', 'seg');
+    options.forEach(function (o) {
+      var b = el('button', null, o.label);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(S[key] === o.value));
+      b.addEventListener('click', function () {
+        S[key] = o.value; save(); onChange();
+      });
+      box.appendChild(b);
+    });
+    f.appendChild(box);
+    f._sync = function () { [].forEach.call(box.children, function (b, i) { b.setAttribute('aria-pressed', String(S[key] === options[i].value)); }); };
+    return f;
+  }
+  function toggle(label, key, onChange) {
+    var f = el('div', 'sw');
+    f.appendChild(el('span', null, label));
+    var b = el('button');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(!!S[key]));
+    b.addEventListener('click', function () { S[key] = !S[key]; save(); b.setAttribute('aria-pressed', String(!!S[key])); onChange(); });
+    f.appendChild(b);
+    f._sync = function () { b.setAttribute('aria-pressed', String(!!S[key])); };
+    return f;
+  }
+
+  var fields = [];
+  function renderTweaks() {
+    var box = $('#tw-body');
+    box.textContent = '';
+    fields = [];
+    function add(f) { fields.push(f); box.appendChild(f); }
+
+    add(seg('骨架分组粒度', 'group', [
+      { label: '按轮次', value: 'turn' }, { label: '按 category', value: 'category' }, { label: '不分组', value: 'none' },
+    ], function () { renderMainline(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    add(seg('轮次聚类桶宽', 'bucket', [
+      { label: '4 轮', value: 4 }, { label: '8 轮', value: 8 }, { label: '16 轮', value: 16 },
+    ], function () { renderMainline(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    add(seg('密度', 'density', [
+      { label: '紧凑', value: 'compact' }, { label: '舒适', value: 'comfort' },
+    ], function () { apply(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    add(seg('主题', 'theme', [
+      { label: '深色', value: 'dark' }, { label: '浅色', value: 'light' },
+    ], function () { apply(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    add(seg('引用按钮', 'quote', [
+      { label: 'hover 显示', value: 'hover' }, { label: '常显', value: 'always' },
+    ], function () { apply(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    add(toggle('当前轮高亮', 'now', function () { apply(); renderMainline(); }));
+    add(toggle('token 微条', 'tokbar', function () { apply(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+    add(toggle('折叠低信息量条目', 'hideNoise', function () { renderMainline(); fields.forEach(function (f) { f._sync && f._sync(); }); }));
+
+    var foot = el('div', 'tw-foot');
+    foot.appendChild(document.createTextNode('j / k 在骨架条目间移动，'));
+    foot.appendChild(el('kbd', null, 'Enter'));
+    foot.appendChild(document.createTextNode(' 引用。分组/密度/主题会记进 localStorage。'));
+    box.appendChild(foot);
+  }
+
+  function setTweaks(open) {
+    root.setAttribute('data-tweaks', open ? 'open' : 'closed');
+    try { localStorage.setItem(SAVE_KEY + ':open', open ? '1' : '0'); } catch (e) { /* ignore */ }
+  }
+
+  // ── 键盘：j/k 移动（刻意不用 scrollIntoView，避免影响外层容器滚动） ──
+  function focusStep(dir) {
+    var rows = [].slice.call(document.querySelectorAll('.row'));
+    if (!rows.length) return;
+    var idx = rows.indexOf(document.activeElement);
+    var next = idx < 0 ? (dir > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, idx + dir));
+    rows[next].focus({ preventScroll: true });
+    var r = rows[next].getBoundingClientRect();
+    var vh = window.innerHeight;
+    if (r.top < 90) window.scrollBy({ top: r.top - 110, behavior: 'auto' });
+    else if (r.bottom > vh - 20) window.scrollBy({ top: r.bottom - vh + 40, behavior: 'auto' });
+  }
+
+  // ── 启动 ────────────────────────────────────────────────────────
+  load();
+  apply();
+  renderHead();
+  renderTask();
+  renderMainline();
+  renderL2();
+  renderL3();
+  renderFoot();
+  renderTweaks();
+  var wasOpen = false;
+  try { wasOpen = localStorage.getItem(SAVE_KEY + ':open') === '1'; } catch (e) { /* ignore */ }
+  setTweaks(wasOpen);
+
+  $('#tw-open').addEventListener('click', function () { setTweaks(true); });
+  $('#tw-close').addEventListener('click', function () { setTweaks(false); });
+  document.addEventListener('keydown', function (e) {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if (e.key === 'j') { focusStep(1); e.preventDefault(); }
+    else if (e.key === 'k') { focusStep(-1); e.preventDefault(); }
+    else if (e.key === 'Enter' && document.activeElement && document.activeElement.classList.contains('row')) {
+      var b = document.activeElement.querySelector('.qbtn');
+      if (b) b.click();
+    } else if (e.key === 'Escape') { setTweaks(false); }
+  });
+})();
+</script>
+</body>
+</html>

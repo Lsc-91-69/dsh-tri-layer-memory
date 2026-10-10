@@ -638,3 +638,158 @@ test('思维栏：引用标准 prop 缺席时只读降级——不渲染按钮�
   const half = renderMemoryView(harness, projectionValue(), { useInput: (selector) => selector({ draft: '' }) })
   assert.equal(collectButtons(half).length, 0)
 })
+
+// ── 设计移植：轮次分组 / 当前轮签名 / L3 会话分组 ─────────────────────────
+//
+// 这三块是新渲染层的骨架，也是**测试测不到样式**的部分里唯一能被断言的：
+// 分组口径（组头报哪些轮）、当前轮的判定、会话分组的顺序与默认展开态。
+// 样式本身（刻度线位置、字号分层、金色 chip）只能在浏览器里验，不在这里假装验过。
+
+/** 收集树里所有满足判据的节点（按渲染顺序）。 */
+function collectNodes(node, predicate, out = []) {
+  if (node === null || node === undefined || typeof node !== 'object') return out
+  if (Array.isArray(node)) {
+    for (const child of node) collectNodes(child, predicate, out)
+    return out
+  }
+  if (predicate(node)) out.push(node)
+  for (const child of node.children ?? []) collectNodes(child, predicate, out)
+  return out
+}
+
+/** 造一条骨架条目（默认单轮）。 */
+function entry(turn, title, cause = '原因', category = '任务', turnTo) {
+  const e = { turn, title, cause, category }
+  if (turnTo !== undefined) e.turnTo = turnTo
+  return e
+}
+
+test('思维栏：骨架按轮次分组，组头报**实际包含的轮次**（只有连续段才压成区间）', () => {
+  const { factory } = loadClientModule()
+  const exports = factory((spec) => (spec === 'react' ? React : makeStoreModule()))
+  const harness = mockClientContext()
+  exports.apply(harness.ctx)
+
+  // 桶宽 8：1–8 / 9–16 / 17–24。第一桶里故意挖空 3、5，并在 1 轮放两条（去重）。
+  const projection = projectionValue({
+    mainline: [
+      entry(1, 'A'), entry(1, 'B'), entry(2, 'C'), entry(4, 'D'), entry(6, 'E'), entry(7, 'F'), entry(8, 'G'),
+      entry(9, 'H'), entry(17, 'I'),
+    ],
+    l1: { retainTurns: 8, turns: 3, evicted: 0 },
+  })
+  const tree = renderMemoryView(harness, projection)
+  const labels = collectNodes(tree, (n) => n.props && n.props.className === 'dsh_tlm_memGrpLabel')
+    .map((n) => flattenText(n))
+
+  assert.deepEqual(labels, ['第 1–2、4、6–8 轮', '第 9 轮', '第 17 轮'],
+    '组头必须报实际包含的轮次：跨轮条目的"最小–最大"会让相邻分组互相重叠')
+  // 1 轮有两条（A/B），标签里只能出现一次——不去重会印出「第 1、1、1–2 轮」。
+  assert.ok(!labels[0].includes('1、1'), '同轮的多条里程碑要去重')
+
+  const stats = collectNodes(tree, (n) => n.props && n.props.className === 'dsh_tlm_memGrpStat')
+    .map((n) => flattenText(n))
+  assert.deepEqual(stats, ['7 条', '1 条', '1 条'], '组头报的是这一组实际有几条')
+})
+
+test('思维栏：当前轮有金色刻度线与 chip —— 组、行两级都要标出来', () => {
+  const { factory } = loadClientModule()
+  const exports = factory((spec) => (spec === 'react' ? React : makeStoreModule()))
+  const harness = mockClientContext()
+  exports.apply(harness.ctx)
+
+  // 引擎口径：L1 窗口 3 轮 + 已溢出 9 轮 = 第 12 轮；骨架也覆盖到第 12 轮。
+  const covered = projectionValue({
+    mainline: [entry(1, 'A'), entry(9, 'H'), entry(12, 'L')],
+    l1: { retainTurns: 3, turns: 3, evicted: 9 },
+  })
+  const tree = renderMemoryView(harness, covered)
+
+  assert.ok(flattenText(tree).includes('当前 第 12 轮'), 'chip 报当前轮')
+  assert.ok(flattenText(tree).includes('骨架覆盖 第 1–12 轮 · 2 段'), 'chip 旁边同时报骨架覆盖范围')
+
+  const nowChip = collectNodes(tree, (n) => n.props && n.props.className === 'dsh_tlm_memNowChip')[0]
+  assert.ok(nowChip.props.title.includes('本会话已产生 12 轮'), '悬停提示要说清"当前轮"是哪个口径')
+  assert.ok(nowChip.props.title.includes('骨架最远覆盖到第 12 轮'), '两个口径都摆出来，不假装精确')
+
+  // 当前轮落在第 9–12 轮那一段里 → 那一段挂「当前」badge，行上带 isNow。
+  const badges = collectNodes(tree, (n) => n.props && n.props.className === 'dsh_tlm_memNowBadge')
+  assert.equal(badges.length, 1, '只有覆盖当前轮的那一组挂 badge')
+  assert.equal(collectNodes(tree, (n) => n.props && typeof n.props.className === 'string'
+    && n.props.className.indexOf('dsh_tlm_memRow') === 0 && n.props.className.includes('isNow')).length,
+    1, '当前轮那一行要有 isNow（金色 2px 刻度线 + 高亮靠它）')
+
+  // 引擎比骨架更靠前（里程碑还没跟上）：chip 照实报，但**不**硬把最后一行标成当前——
+  // 把一个已经过去的轮指成"当前"比不标更糟。
+  const ahead = projectionValue({
+    mainline: [entry(1, 'A'), entry(9, 'H')],
+    l1: { retainTurns: 3, turns: 3, evicted: 9 },
+  })
+  const aheadTree = renderMemoryView(harness, ahead)
+  assert.ok(flattenText(aheadTree).includes('当前 第 12 轮'), 'chip 报的是引擎口径的当前轮')
+  assert.ok(flattenText(aheadTree).includes('骨架覆盖 第 1–9 轮 · 2 段'), '覆盖范围分开报，读者能看出骨架滞后')
+  assert.equal(collectNodes(aheadTree, (n) => n.props && n.props.className === 'dsh_tlm_memNowBadge').length, 0,
+    '骨架没覆盖到当前轮时，没有任何一组该被标成当前')
+  assert.equal(collectNodes(aheadTree, (n) => n.props && typeof n.props.className === 'string'
+    && n.props.className.includes('isNow')).length, 0, '同样不许把最后一行硬标成当前')
+
+  // 跨轮条目也要能命中：当前轮落在 4–6 区间里时整条算当前。
+  const spanned = projectionValue({
+    mainline: [entry(4, 'X', '原因', '失败', 6)],
+    l1: { retainTurns: 8, turns: 5, evicted: 0 },
+  })
+  const spannedTree = renderMemoryView(harness, spanned)
+  assert.equal(collectNodes(spannedTree, (n) => n.props && typeof n.props.className === 'string'
+    && n.props.className.includes('isNow')).length, 1, '当前轮落在跨轮区间里时该行也算当前')
+})
+
+test('思维栏：L3 按会话分组——本会话排最前、默认展开；别的会话收起', () => {
+  const { factory } = loadClientModule()
+  const exports = factory((spec) => (spec === 'react' ? React : makeStoreModule()))
+  const harness = mockClientContext()
+  exports.apply(harness.ctx)
+
+  // 别的会话的记录**排在前面**：分组顺序不能跟着输入顺序走，
+  // 否则"哪一段是我的"要靠读者自己在整库列表里找。
+  const projection = projectionValue({
+    l3: {
+      backend: 'sqlite', count: 9, tokens: 99, sessionCount: 1, sessionTokens: 4,
+      sessionId: 'session-aaaabbbb-1111-2222-3333-444455556666',
+      records: [
+        { id: 'l3-other', kind: 'turn', turnFrom: 3, turnTo: 3, text: '别的会话的正文', tokens: 5, sessionId: 'session-ccccdddd-9999-8888-7777-666655554444', own: false },
+        { id: 'l3-own', kind: 'turn', turnFrom: 1, turnTo: 1, text: '本会话的正文', tokens: 4, sessionId: 'session-aaaabbbb-1111-2222-3333-444455556666', own: true },
+      ],
+    },
+  })
+  const tree = renderMemoryView(harness, projection, {
+    inputActions: { setDraft() {} },
+    useInput: (selector) => selector({ draft: '' }),
+  })
+  const sessions = collectNodes(tree, (n) => n.type === 'details' && n.props && n.props.className === 'dsh_tlm_memSess')
+
+  assert.equal(sessions.length, 2, '两个会话两个折叠块')
+  assert.equal(sessions[0].props.open, true, '本会话默认展开')
+  assert.equal(sessions[1].props.open, false, '别的会话默认收起')
+  assert.ok(flattenText(sessions[0]).includes('本会话'), '本会话必须显式标出来，不靠"不标就是本会话"猜')
+  assert.ok(flattenText(sessions[1]).includes('其它会话'), '别的会话要可辨识：它的「第 3 轮」看着和本会话的一样')
+  assert.ok(flattenText(sessions[0]).includes('本会话的正文'))
+  assert.ok(flattenText(sessions[1]).includes('别的会话的正文'))
+
+  // 引用按钮跟着记录走，顺序 = 分组后的渲染顺序（本会话那条在前）。
+  const buttons = collectButtons(tree)
+  assert.equal(buttons[4].title, '记忆引用 · L3 l3-own · 第 1 轮 · turn')
+  assert.equal(buttons[5].title, '记忆引用 · L3 l3-other · 第 3 轮 · turn')
+})
+
+test('思维栏：投影缺 l1（宿主更老）时当前轮退化到骨架口径，不抛错', () => {
+  const { factory } = loadClientModule()
+  const exports = factory((spec) => (spec === 'react' ? React : makeStoreModule()))
+  const harness = mockClientContext()
+  exports.apply(harness.ctx)
+
+  const noL1 = projectionValue({ mainline: [entry(1, 'A'), entry(7, 'G')] })
+  delete noL1.l1
+  let tree
+  assert.doesNotThrow(() => { tree = renderMemoryView(harness, noL1) }, '形状不全只该降级，不该抛')
+  assert.ok(flattenText(tree).includes('当前 第 7 轮'), '没有 l1 读数时用骨架最远覆盖到的轮')
+})

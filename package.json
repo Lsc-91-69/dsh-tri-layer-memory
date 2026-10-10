@@ -1,6 +1,6 @@
 {
   "name": "dsh-tri-layer-memory",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "三层记忆压缩引擎 — 人脑式上下文压缩的显式分层实现: L1 工作记忆(原文保留) / L2 短期记忆(LLM 摘要, 每轮注入) / L3 深层记忆(本地持久化 + 按需 recall)。自包含、零第三方 DSH 插件依赖，装一个开关即用。",
   "type": "module",
   "main": "./lib/entry.js",

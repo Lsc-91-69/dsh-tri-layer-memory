@@ -1,0 +1,1429 @@
+{
+  "tag": "before",
+  "file": "D:\\deepseek\\deepseekh_work\\plugins\\dsh-tri-layer-memory\\design\\思维栏 v0.html",
+  "widths": {
+    "420": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 420,
+      "scrollW": 420,
+      "occludedHeads": 11,
+      "occluded": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 12,
+            "t": 49.31,
+            "w": 47.31,
+            "h": 15.94,
+            "r": 59.31,
+            "b": 65.25
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 59.14,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 67.14
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 59.14,
+            "r": 50,
+            "b": 67.14
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 12,
+            "t": 629.27,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 95.84,
+            "b": 645.2
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 639.09,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 647.09
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 639.09,
+            "r": 50,
+            "b": 647.09
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 12,
+            "t": 831.59,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 95.84,
+            "b": 847.53
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 841.42,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 849.42
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 841.42,
+            "r": 50,
+            "b": 849.42
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 1164.98,
+            "w": 59.97,
+            "h": 15.94,
+            "r": 71.97,
+            "b": 1180.92
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 1174.81,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 1182.81
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 1174.81,
+            "r": 50,
+            "b": 1182.81
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 1605.69,
+            "w": 113,
+            "h": 15.94,
+            "r": 125,
+            "b": 1621.63
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 1615.52,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 1623.52
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 1615.52,
+            "r": 50,
+            "b": 1623.52
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 1814.56,
+            "w": 102.2,
+            "h": 15.94,
+            "r": 114.2,
+            "b": 1830.5
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 1824.39,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 1832.39
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 1824.39,
+            "r": 50,
+            "b": 1832.39
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 2156.14,
+            "w": 126.08,
+            "h": 15.94,
+            "r": 138.08,
+            "b": 2172.08
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 2165.97,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 2173.97
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 2165.97,
+            "r": 50,
+            "b": 2173.97
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 2533.77,
+            "w": 125.88,
+            "h": 15.94,
+            "r": 137.88,
+            "b": 2549.7
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 2543.59,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 2551.59
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 2543.59,
+            "r": 50,
+            "b": 2551.59
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 2785.23,
+            "w": 83.42,
+            "h": 15.94,
+            "r": 95.42,
+            "b": 2801.17
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 2795.06,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 2803.06
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 2795.06,
+            "r": 50,
+            "b": 2803.06
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 2948.23,
+            "w": 107.08,
+            "h": 15.94,
+            "r": 119.08,
+            "b": 2964.17
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 2958.06,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 2966.06
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 2958.06,
+            "r": 50,
+            "b": 2966.06
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 12,
+            "t": 3155.47,
+            "w": 41.59,
+            "h": 15.94,
+            "r": 53.59,
+            "b": 3171.41
+          },
+          "dotRect": {
+            "l": 42,
+            "t": 3165.3,
+            "w": 8,
+            "h": 8,
+            "r": 50,
+            "b": 3173.3
+          },
+          "dotPaintedRect": {
+            "l": 42,
+            "t": 3165.3,
+            "r": 50,
+            "b": 3173.3
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        }
+      ],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 12,
+          "dotL": 42
+        }
+      ]
+    },
+    "1280": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 1280,
+      "scrollW": 1270,
+      "occludedHeads": 11,
+      "occluded": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 189,
+            "t": 49.44,
+            "w": 47.31,
+            "h": 15.94,
+            "r": 236.31,
+            "b": 65.38
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 59.27,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 67.27
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 59.27,
+            "r": 227,
+            "b": 67.27
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 189,
+            "t": 610.55,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 272.84,
+            "b": 626.48
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 620.38,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 628.38
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 620.38,
+            "r": 227,
+            "b": 628.38
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 54,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 189,
+            "t": 776.83,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 272.84,
+            "b": 792.77
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 786.66,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 794.66
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 786.66,
+            "r": 227,
+            "b": 794.66
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 1072.53,
+            "w": 59.97,
+            "h": 15.94,
+            "r": 248.97,
+            "b": 1088.47
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 1082.36,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 1090.36
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 1082.36,
+            "r": 227,
+            "b": 1090.36
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 1456.7,
+            "w": 113,
+            "h": 15.94,
+            "r": 302,
+            "b": 1472.64
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 1466.53,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 1474.53
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 1466.53,
+            "r": 227,
+            "b": 1474.53
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 1665.58,
+            "w": 102.2,
+            "h": 15.94,
+            "r": 291.2,
+            "b": 1681.52
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 1675.41,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 1683.41
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 1675.41,
+            "r": 227,
+            "b": 1683.41
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 2007.16,
+            "w": 126.08,
+            "h": 15.94,
+            "r": 315.08,
+            "b": 2023.09
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 2016.98,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 2024.98
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 2016.98,
+            "r": 227,
+            "b": 2024.98
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 2347.09,
+            "w": 125.88,
+            "h": 15.94,
+            "r": 314.88,
+            "b": 2363.03
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 2356.92,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 2364.92
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 2356.92,
+            "r": 227,
+            "b": 2364.92
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 2598.56,
+            "w": 83.42,
+            "h": 15.94,
+            "r": 272.42,
+            "b": 2614.5
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 2608.39,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 2616.39
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 2608.39,
+            "r": 227,
+            "b": 2616.39
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 2761.56,
+            "w": 107.08,
+            "h": 15.94,
+            "r": 296.08,
+            "b": 2777.5
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 2771.39,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 2779.39
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 2771.39,
+            "r": 227,
+            "b": 2779.39
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 189,
+            "t": 2968.8,
+            "w": 41.59,
+            "h": 15.94,
+            "r": 230.59,
+            "b": 2984.73
+          },
+          "dotRect": {
+            "l": 219,
+            "t": 2978.63,
+            "w": 8,
+            "h": 8,
+            "r": 227,
+            "b": 2986.63
+          },
+          "dotPaintedRect": {
+            "l": 219,
+            "t": 2978.63,
+            "r": 227,
+            "b": 2986.63
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        }
+      ],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 54,
+          "topmost": "dot",
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 189,
+          "dotL": 219
+        }
+      ]
+    },
+    "1440": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 1440,
+      "scrollW": 1430,
+      "occludedHeads": 11,
+      "occluded": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 269,
+            "t": 49.44,
+            "w": 47.31,
+            "h": 15.94,
+            "r": 316.31,
+            "b": 65.38
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 59.27,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 67.27
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 59.27,
+            "r": 307,
+            "b": 67.27
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 269,
+            "t": 610.55,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 352.84,
+            "b": 626.48
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 620.38,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 628.38
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 620.38,
+            "r": 307,
+            "b": 628.38
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 54,
+          "topmostAtEaten": "dot",
+          "spanRect": {
+            "l": 269,
+            "t": 776.83,
+            "w": 83.84,
+            "h": 15.94,
+            "r": 352.84,
+            "b": 792.77
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 786.66,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 794.66
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 786.66,
+            "r": 307,
+            "b": 794.66
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 1072.53,
+            "w": 59.97,
+            "h": 15.94,
+            "r": 328.97,
+            "b": 1088.47
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 1082.36,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 1090.36
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 1082.36,
+            "r": 307,
+            "b": 1090.36
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 1456.7,
+            "w": 113,
+            "h": 15.94,
+            "r": 382,
+            "b": 1472.64
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 1466.53,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 1474.53
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 1466.53,
+            "r": 307,
+            "b": 1474.53
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 1665.58,
+            "w": 102.2,
+            "h": 15.94,
+            "r": 371.2,
+            "b": 1681.52
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 1675.41,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 1683.41
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 1675.41,
+            "r": 307,
+            "b": 1683.41
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 2007.16,
+            "w": 126.08,
+            "h": 15.94,
+            "r": 395.08,
+            "b": 2023.09
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 2016.98,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 2024.98
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 2016.98,
+            "r": 307,
+            "b": 2024.98
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 2347.09,
+            "w": 125.88,
+            "h": 15.94,
+            "r": 394.88,
+            "b": 2363.03
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 2356.92,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 2364.92
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 2356.92,
+            "r": 307,
+            "b": 2364.92
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 2598.56,
+            "w": 83.42,
+            "h": 15.94,
+            "r": 352.42,
+            "b": 2614.5
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 2608.39,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 2616.39
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 2608.39,
+            "r": 307,
+            "b": 2616.39
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 2761.56,
+            "w": 107.08,
+            "h": 15.94,
+            "r": 376.08,
+            "b": 2777.5
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 2771.39,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 2779.39
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 2771.39,
+            "r": 307,
+            "b": 2779.39
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmostAtEaten": null,
+          "spanRect": {
+            "l": 269,
+            "t": 2968.8,
+            "w": 41.59,
+            "h": 15.94,
+            "r": 310.59,
+            "b": 2984.73
+          },
+          "dotRect": {
+            "l": 299,
+            "t": 2978.63,
+            "w": 8,
+            "h": 8,
+            "r": 307,
+            "b": 2986.63
+          },
+          "dotPaintedRect": {
+            "l": 299,
+            "t": 2978.63,
+            "r": 307,
+            "b": 2986.63
+          },
+          "shadowSpread": 0,
+          "headPadLeft": "0px"
+        }
+      ],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "8 轮",
+          "eatenCount": 3,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 56,
+          "topmost": "dot",
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "–2",
+          "eatenCount": 2,
+          "coveredPoints": 54,
+          "topmost": "dot",
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "–3",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "–4",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "–5",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "、",
+          "eatenCount": 1,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": " 轮",
+          "eatenCount": 2,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 269,
+          "dotL": 299
+        }
+      ]
+    }
+  },
+  "console": []
+}

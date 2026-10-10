@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-density="compact" data-quote="hover" data-tokbar="on" data-now="on" data-tweaks="closed">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>思维栏 v0 · DSH 三层记忆</title>
+<style>
+/*STYLE*/
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header class="head">
+    <div class="head-top">
+      <span class="head-title" id="head-title">思维栏</span>
+      <span class="head-meta" id="head-meta"></span>
+    </div>
+    <div class="head-sub" id="head-sub"></div>
+  </header>
+
+  <!-- 1 · 任务标题 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">任务标题</span>
+      <span class="spacer"></span>
+    </div>
+    <div class="task" id="task-row">
+      <p class="task-title" id="task-title"></p>
+    </div>
+  </section>
+
+  <!-- 2 · 里程碑主线骨架 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">里程碑主线骨架</span>
+      <span class="sec-stat" id="mainline-stat"></span>
+      <span class="spacer"></span>
+      <span class="locate" id="locate"></span>
+    </div>
+    <div id="mainline"></div>
+  </section>
+
+  <!-- 3 · L2 短期摘要 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">L2 短期摘要</span>
+      <span class="sec-stat" id="l2-stat"></span>
+      <span class="spacer"></span>
+      <button class="qbtn" id="l2-quote" type="button" title="引用 · L2 摘要">引用</button>
+    </div>
+    <p class="sec-note" id="l2-note"></p>
+    <details class="l2-wrap" id="l2-sum">
+      <summary class="l2-sum">
+        <span class="caret"></span>
+        <span>LLM 摘要正文</span>
+        <span class="grow"></span>
+        <span id="l2-hint">默认只展开前 2 节</span>
+      </summary>
+      <div class="l2-body" id="l2-body"></div>
+    </details>
+  </section>
+
+  <!-- 4 · L3 深层记忆 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-name">L3 深层记忆</span>
+      <span class="sec-stat" id="l3-stat"></span>
+    </div>
+    <p class="sec-note" id="l3-note"></p>
+    <div id="l3"></div>
+  </section>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<div class="quote-note" id="note" role="status" aria-live="polite"></div>
+
+<button class="tw-launch" id="tw-open" type="button" title="打开 Tweaks" aria-label="打开 Tweaks">T</button>
+
+<aside class="tw" id="tw" role="dialog" aria-label="Tweaks">
+  <div class="tw-head">
+    <b>Tweaks</b>
+    <button class="tw-x" id="tw-close" type="button" aria-label="关闭 Tweaks">×</button>
+  </div>
+  <div id="tw-body"></div>
+</aside>
+
+<script>
+window.__TLM__ = /*DATA*/;
+</script>
+<script>
+/*APP*/
+</script>
+</body>
+</html>

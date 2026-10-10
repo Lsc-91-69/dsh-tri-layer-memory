@@ -1,0 +1,370 @@
+{
+  "tag": "final",
+  "file": "D:\\deepseek\\deepseekh_work\\plugins\\dsh-tri-layer-memory\\design\\思维栏 v0.html",
+  "widths": {
+    "420": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 420,
+      "scrollW": 420,
+      "occludedHeads": 0,
+      "occluded": [],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 68,
+          "dotL": 42
+        }
+      ]
+    },
+    "1280": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 1280,
+      "scrollW": 1270,
+      "occludedHeads": 0,
+      "occluded": [],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 245,
+          "dotL": 219
+        }
+      ]
+    },
+    "1440": {
+      "groups": 11,
+      "spineX": "34px",
+      "density": "compact",
+      "innerW": 1440,
+      "scrollW": 1430,
+      "occludedHeads": 0,
+      "occluded": [],
+      "all": [
+        {
+          "gi": 0,
+          "label": "第 1–8 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 1,
+          "label": "第 12、15–16 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 2,
+          "label": "第 18–22、24 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 3,
+          "label": "第 25–32 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 4,
+          "label": "第 33、35、37、39 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 5,
+          "label": "第 41–43、45–48 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 6,
+          "label": "第 49–50、52、54–56 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 7,
+          "label": "第 57–58、61–62、64 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 8,
+          "label": "第 66、70–71 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 9,
+          "label": "第 74、76、79–80 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        },
+        {
+          "gi": 10,
+          "label": "第 81 轮",
+          "eatenChars": "",
+          "eatenCount": 0,
+          "coveredPoints": 0,
+          "topmost": null,
+          "spanL": 325,
+          "dotL": 299
+        }
+      ]
+    }
+  },
+  "console": []
+}

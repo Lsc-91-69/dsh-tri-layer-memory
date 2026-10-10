@@ -1,0 +1,339 @@
+{
+  "widths": {
+    "420": {
+      "doc": {
+        "w": 405,
+        "iw": 420,
+        "h": 21063
+      },
+      "styles": {
+        "groups": 11,
+        "labels": [
+          "第 1–8 轮",
+          "第 12、15–16 轮",
+          "第 18–22、24 轮",
+          "第 25–32 轮",
+          "第 33、35、37、39 轮",
+          "第 41–43、45–48 轮",
+          "第 49–50、52、54–56 轮",
+          "第 57–58、61–62、64 轮",
+          "第 66、70–71 轮",
+          "第 74、76、79–80 轮",
+          "第 81 轮"
+        ],
+        "rows": 61,
+        "nowRows": 2,
+        "nowRowTexts": [
+          "第 81 轮: 提出 3 项要求：关闭了",
+          "第 81 轮: 上下文压缩 — 摘要 15240 字符，遮蔽 185391 tokens"
+        ],
+        "nowBadges": 1,
+        "sessions": [
+          {
+            "open": true,
+            "text": "5b59b635本会话显示 39 条 · 约 3510 tokens"
+          },
+          {
+            "open": false,
+            "text": "cfd202a4其它会话显示 1 条 · 约 30 tokens"
+          }
+        ],
+        "anchor": {
+          "fontSize": "10px",
+          "fontWeight": "400",
+          "color": "rgb(129, 133, 140)",
+          "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Con",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "right",
+          "paddingLeft": "0px"
+        },
+        "anchorTick": {
+          "fontSize": "10px",
+          "fontWeight": "400",
+          "color": "rgb(129, 133, 140)",
+          "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Con",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgb(53, 54, 56)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "right",
+          "paddingLeft": "0px"
+        },
+        "title": {
+          "fontSize": "13.5px",
+          "fontWeight": "400",
+          "color": "rgb(249, 250, 251)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "cause": {
+          "fontSize": "12px",
+          "fontWeight": "400",
+          "color": "rgb(173, 178, 184)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "grpHead": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(249, 250, 251)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "flex",
+          "textAlign": "start",
+          "paddingLeft": "80px"
+        },
+        "grpLabel": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(207, 211, 214)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "quote": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(173, 178, 184)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "1px",
+          "whiteSpace": "nowrap",
+          "display": "inline-block",
+          "textAlign": "center",
+          "paddingLeft": "6px"
+        },
+        "quoteVisible": 102,
+        "nowRow": {
+          "boxShadow": "rgb(245, 158, 11) 2px 0px 0px 0px inset",
+          "background": "color(srgb 0.960784 0.619608 0.0431373 / 0.08)",
+          "anchorColor": "rgb(221, 134, 41)"
+        },
+        "dotPseudo": {
+          "left": "69px",
+          "top": "11px",
+          "width": "8px",
+          "height": "8px",
+          "background": "rgb(53, 54, 56)",
+          "position": "absolute"
+        },
+        "dotOverlapsLabel": false,
+        "grpLabelLeftInHead": 80,
+        "chipText": "当前 第 81 轮",
+        "chipTitle": "本会话已产生 81 轮；骨架最远覆盖到第 81 轮。",
+        "locate": "当前 第 81 轮骨架覆盖 第 1–81 轮 · 11 段",
+        "overflowX": false,
+        "docW": 420,
+        "docH": 20707,
+        "bg": "rgb(21, 21, 23)"
+      },
+      "hoverQuote": "1",
+      "idleQuote": "1",
+      "mouseAt": {
+        "x": 22,
+        "y": 414
+      }
+    },
+    "800": {
+      "doc": {
+        "w": 785,
+        "iw": 800,
+        "h": 16175
+      },
+      "styles": {
+        "groups": 11,
+        "labels": [
+          "第 1–8 轮",
+          "第 12、15–16 轮",
+          "第 18–22、24 轮",
+          "第 25–32 轮",
+          "第 33、35、37、39 轮",
+          "第 41–43、45–48 轮",
+          "第 49–50、52、54–56 轮",
+          "第 57–58、61–62、64 轮",
+          "第 66、70–71 轮",
+          "第 74、76、79–80 轮",
+          "第 81 轮"
+        ],
+        "rows": 61,
+        "nowRows": 2,
+        "nowRowTexts": [
+          "第 81 轮: 提出 3 项要求：关闭了",
+          "第 81 轮: 上下文压缩 — 摘要 15240 字符，遮蔽 185391 tokens"
+        ],
+        "nowBadges": 1,
+        "sessions": [
+          {
+            "open": true,
+            "text": "5b59b635本会话显示 39 条 · 约 3510 tokens"
+          },
+          {
+            "open": false,
+            "text": "cfd202a4其它会话显示 1 条 · 约 30 tokens"
+          }
+        ],
+        "anchor": {
+          "fontSize": "10.5px",
+          "fontWeight": "400",
+          "color": "rgb(129, 133, 140)",
+          "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Con",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "right",
+          "paddingLeft": "0px"
+        },
+        "anchorTick": {
+          "fontSize": "10.5px",
+          "fontWeight": "400",
+          "color": "rgb(129, 133, 140)",
+          "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Con",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgb(53, 54, 56)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "right",
+          "paddingLeft": "0px"
+        },
+        "title": {
+          "fontSize": "13.5px",
+          "fontWeight": "400",
+          "color": "rgb(249, 250, 251)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "cause": {
+          "fontSize": "12px",
+          "fontWeight": "400",
+          "color": "rgb(173, 178, 184)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "grpHead": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(249, 250, 251)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "normal",
+          "display": "flex",
+          "textAlign": "start",
+          "paddingLeft": "92px"
+        },
+        "grpLabel": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(207, 211, 214)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "1",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "0px",
+          "whiteSpace": "nowrap",
+          "display": "block",
+          "textAlign": "start",
+          "paddingLeft": "0px"
+        },
+        "quote": {
+          "fontSize": "11px",
+          "fontWeight": "400",
+          "color": "rgb(173, 178, 184)",
+          "fontFamily": "\"Segoe UI Variable Text\", \"Segoe UI\", \"M",
+          "opacity": "0",
+          "boxShadow": "none",
+          "background": "rgba(0, 0, 0, 0)",
+          "borderTop": "1px",
+          "whiteSpace": "nowrap",
+          "display": "inline-block",
+          "textAlign": "center",
+          "paddingLeft": "6px"
+        },
+        "quoteVisible": 0,
+        "nowRow": {
+          "boxShadow": "rgb(245, 158, 11) 2px 0px 0px 0px inset",
+          "background": "color(srgb 0.960784 0.619608 0.0431373 / 0.08)",
+          "anchorColor": "rgb(221, 134, 41)"
+        },
+        "dotPseudo": {
+          "left": "77px",
+          "top": "11px",
+          "width": "8px",
+          "height": "8px",
+          "background": "rgb(53, 54, 56)",
+          "position": "absolute"
+        },
+        "dotOverlapsLabel": false,
+        "grpLabelLeftInHead": 92,
+        "chipText": "当前 第 81 轮",
+        "chipTitle": "本会话已产生 81 轮；骨架最远覆盖到第 81 轮。",
+        "locate": "当前 第 81 轮骨架覆盖 第 1–81 轮 · 11 段",
+        "overflowX": false,
+        "docW": 785,
+        "docH": 16175,
+        "bg": "rgb(21, 21, 23)"
+      },
+      "hoverQuote": "1",
+      "idleQuote": "0",
+      "mouseAt": {
+        "x": 35,
+        "y": 332
+      }
+    }
+  },
+  "console": []
+}
