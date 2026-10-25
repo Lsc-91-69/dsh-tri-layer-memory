@@ -46,7 +46,8 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/verify-sources.mjs && node --check lib/entry.js && node --check lib/impl.js && node --check lib/client.js",
     "test": "node --test \"test/*.test.mjs\"",
-    "verify": "npm run build && npm run check && npm run test"
+    "verify": "npm run build && npm run check && npm run test",
+    "compat": "node scripts/compat-check.mjs"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
