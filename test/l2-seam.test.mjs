@@ -158,7 +158,9 @@ test('llm 缺席：memory_state 里能看出"服务没拿到"，而不是静默�
   assert.equal(status.layers.L2.llmSource, 'none', '两条获取路径都没命中时 llmSource 应为 none')
   assert.equal(status.llmSeam.missing, true)
   // 注入块仍然给出一份可用的（抽取式）摘要，不能因为模型缺席就没有 L2。
-  assert.match(injected, /生成方式 extractive/)
+  // 生成方式不再进注入（观察面是 status.layers.L2.via）；这里只钉"摘要正文在场"。
+  assert.doesNotMatch(injected, /生成方式/, '生成方式/压缩比已从注入里删掉')
+  assert.match(injected, /L2 短期记忆/, '回退后仍要有 L2 段')
 })
 
 // ── 2. target 未解析：同样可见 ────────────────────────────────────────────
@@ -224,7 +226,7 @@ test('正向对照：llm 在场且路由可解析时真的走模型（via=llm，
   assert.equal(status.layers.L2.via, 'llm')
   assert.equal(status.layers.L2.failure, null, '成功时不得残留失败原因')
   assert.equal(status.layers.L2.llmSource, 'inject', '软等待命中时应记为 inject')
-  assert.match(injected, /生成方式 llm/)
+  assert.doesNotMatch(injected, /生成方式/, '生成方式/压缩比已从注入里删掉')
   assert.match(injected, /模型产出的摘要/, '注入的必须是模型产出的正文')
 })
 

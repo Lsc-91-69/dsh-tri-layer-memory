@@ -1,11 +1,13 @@
 /**
  * recall.ts — 统一召回入口与状态/验证工具。
  *
- * 三个模型工具：
+ * 四个模型工具：
  * - `memory_recall`（重名被占用时自动改名为 `tri_recall`）：按关键词或 id 从
  *   L3 深层记忆库精确取回，并可选附带当前 L2 摘要。
  * - `memory_state`：三层记忆的实时投影（各层读数 + 引擎仲裁 + 组件矩阵）。
  * - `memory_verify`：验证报告，逐项给出 PASS/SKIP/FAIL 与修复指引。
+ * - `memory_dedupe`：清理 L3 同范围重复副本（默认 dry-run，真删前自动备份）。
+ *   必须由插件自己删：外部脚本直连 sqlite 会被插件的内存快照整表覆盖回去。
  *
  * 工具定义走 `defineTool`（会做参数 schema → JSON Schema 的真实转换），
  * 因此本模块必须 import `@deepseek-ai/dsh-tools`，不能自己造一个恒等函数。
@@ -13,14 +15,29 @@
  * @module dsh-tri-layer-memory/recall
  */
 import { defineTool } from './platform.ts'
-import type { MemoryRecord, PruneOutcome } from './l3-deep.ts'
+import type { DedupeOutcome, MemoryRecord, PruneOutcome } from './l3-deep.ts'
 import { buildStatus, detectTools, componentMatrix, engineOf, arbitrateEngine, MEMORY_TOOLS, SHIPPED_COMPONENTS } from './integration.ts'
 
-/** 渲染一条记录为面向模型的文本。 */
+/**
+ * 渲染一条记录为面向模型的文本。
+ *
+ * `tool` 记录必须**一眼看出是原始输出**：否则模型会把 grep/构建结果里的只言片语
+ * 当成已经验证过的结论引用。警告写在正文之上（而不是只写进 kind 标签），因为
+ * 读者最先扫到的是块标题与正文。
+ */
 function renderRecord(record: MemoryRecord, index: number): string {
   const when = new Date(record.createdAt).toISOString()
+  const isTool = record.kind === 'tool'
+  const heading = isTool
+    ? `### [${index + 1}] ${record.id}  (tool · 工具原始输出 · turn ${record.turnFrom}–${record.turnTo} · **非结论**)`
+    : `### [${index + 1}] ${record.id}  (${record.kind}, turn ${record.turnFrom}–${record.turnTo})`
+  const warning = isTool
+    ? '> ⚠ 这是当时工具/命令的**原始输出摘录**，不是结论，也不是已验证的事实。'
+      + '引用前请自行判断；记录里写明"其余未存"的部分确实没有落库，需要时重跑命令或查原始日志。'
+    : null
   return [
-    `### [${index + 1}] ${record.id}  (${record.kind}, turn ${record.turnFrom}–${record.turnTo})`,
+    heading,
+    ...(warning === null ? [] : [warning]),
     `- 写入时间：${when}　估算 ${record.tokens} tokens　关键词：${record.keywords.slice(0, 8).join(', ') || '(无)'}`,
     '',
     record.text,
@@ -44,7 +61,15 @@ export interface MemoryRuntime {
   /** 按 id 精确取回。 */
   get: (id: string) => MemoryRecord | undefined
   /** L3 统计。 */
-  stats: () => { count: number; tokens: number; backend: string | null; oldest: number | null; newest: number | null }
+  stats: () => {
+    count: number
+    tokens: number
+    backend: string | null
+    oldest: number | null
+    newest: number | null
+    tools: number
+    toolTokens: number
+  }
   /** 当前会话的 L2 摘要文本（无摘要时为 null）。 */
   digestText: (session: unknown) => string | null
   /** 当前会话各层读数（memory_state 用）。 */
@@ -105,9 +130,22 @@ export interface MemoryRuntime {
       backend: string | null
       libraryCount: number
       libraryTokens: number
+      /** 工具细节池条数（独立上限，不计入 l3MaxRecords）。 */
+      toolCount: number
+      /** 工具细节池 token。 */
+      toolTokens: number
       sessionCount: number
       sessionTokens: number
       dir: string
+      /**
+       * 重复读数：同一 `(sessionId, kind, turnFrom, turnTo)` 有 ≥2 条副本的组数，
+       * 以及可删条数。**这是"库里有垃圾"唯一的观察面**——没有它时，去重只能靠
+       * 外部脚本 dry-run，而那个脚本必须在宿主关闭时才能安全跑。
+       */
+      duplicateGroups?: number
+      duplicateRecords?: number
+      /** 其中正文不一致的组数（去重会保留最长的那条，值得人看一眼）。 */
+      duplicateDifferingGroups?: number
     }
     injection: {
       budgetTokens: number
@@ -115,6 +153,15 @@ export interface MemoryRuntime {
       requestedTokens: number
       dropped: string[]
       truncated: string[]
+      /**
+       * 含骨架的**实际**注入合计（与诊断文件的 `injection.totalInjected` 同源）。
+       *
+       * 与 `usedTokens` 的分工：那个只覆盖仲裁层（L1/L2/L3），骨架走独立上限、
+       * 不进仲裁却确实注入。只给前者时，"本轮投影用了多少"会系统性偏小。
+       */
+      totalInjected?: number
+      /** 骨架块的渲染后 token（独立于仲裁预算）。 */
+      mainlineTokens?: number
     }
     recallTool: { name: string; reason: string }
     /** 主线骨架读数（含 cause 回填的失败原因与调用读数）。 */
@@ -146,6 +193,14 @@ export interface MemoryRuntime {
   }
   /** 主动触发一次剪枝（verify 用）；用该会话的 L1 窗口作为任务链关键词来源。 */
   prune: (session: unknown) => PruneOutcome
+  /**
+   * 清理 L3 重复副本。
+   *
+   * 必须是**同一个 store 实例**上的操作：它改内存快照、再由同一后端的 `replace`
+   * 落盘。外部脚本直接开库删行会让插件内存里的旧快照在下一次写盘时把删掉的副本
+   * 写回来——2026-10 的事故就是这么丢数据的（详见 l3-deep.ts 的 `dedupe`）。
+   */
+  dedupe: (input: { dryRun?: boolean; sessionId?: string }) => DedupeOutcome
   /** 引擎期望配置。 */
   expectedEngine: () => 'auto' | 'argp' | 'instant' | 'headroom' | 'basic' | 'none'
   /** 最近一次注入的投影文本（诊断用）。 */
@@ -275,6 +330,94 @@ export function buildStateTool(runtime: MemoryRuntime) {
 }
 
 /**
+ * 构造去重工具。
+ *
+ * **为什么这是个模型工具，而不是继续用外部脚本**：L3 的持久化入口是后端的
+ * `replace(records)`（整表重写），而插件在内存里持有一份记录快照。外部脚本直接
+ * 改 sqlite 后，插件下一次写盘会用旧快照把去重结果覆盖回去——同一份数据两个
+ * owner，必然有一方被静默覆盖（2026-10 已实际发生：1491 条含重复被写回、
+ * digest 18→0、第三个会话整段丢失）。让插件自己删，内存与磁盘才只有一个写入者。
+ *
+ * 工具默认 dry-run：这是**维护操作**，模型必须显式传 `dryRun: false` 才会删数据。
+ *
+ * @param runtime - 三层记忆运行时。
+ * @returns 注册表就绪的工具定义。
+ */
+export function buildDedupeTool(runtime: MemoryRuntime) {
+  /** 把结构化结果翻译成一段人读得懂的话（数字必须与 JSON 完全同源）。 */
+  const summarize = (outcome: DedupeOutcome): string => {
+    const num = (value: number): string => value.toLocaleString('en-US')
+    // before/after 是**范围内**口径（传 sessionId 时是该会话，不传是整库），
+    // 与 removed/groups 同源；不拿整库数字冒充会话数字——那种口径错误在 memory_state 上修过一次。
+    const scope = outcome.sessionId === null ? '整库' : `会话 ${outcome.sessionId}`
+    if (outcome.removed === 0) {
+      return `没有可删的重复组——${scope}已经是去重状态（幂等）。范围内 ${num(outcome.before)} 条记录。`
+    }
+    const head = outcome.dryRun
+      ? `dry-run（未改动任何文件）：${scope} ${num(outcome.before)} 条中将删除 ${num(outcome.removed)} 条`
+        + `（${num(outcome.groups)} 个重复组），删除后 ${num(outcome.after)} 条。`
+      : `已删除 ${num(outcome.removed)} 条（${num(outcome.groups)} 个重复组）：${scope} ${num(outcome.before)} → ${num(outcome.after)} 条；`
+        + `删除前备份 ${outcome.backupPath ?? '(无)'}。`
+    const differing = outcome.differingGroups > 0
+      ? `其中 ${num(outcome.differingGroups)} 组正文不一致，保留的是**最长**的那条（长度相同则保留最新的）`
+        + `（${outcome.differingGroupDetails.slice(0, 5).map((g) => `${g.kind === 'turn' ? '' : `${g.kind} `}第 ${g.turnFrom}–${g.turnTo} 轮`).join('、')}`
+        + `${outcome.differingGroups > 5 ? ' 等' : ''}），不要为了排序稳定丢信息。`
+      : '所有组内正文完全一致。'
+    const refs = outcome.refsRewritten > 0
+      ? `引用改写 ${num(outcome.refsRewritten)} 处（${num(outcome.recordsWithRefUpdates)} 条记录），`
+        + '指向被删副本的 refs 已改指保留的那条，没有悬空引用。'
+      : '没有记录引用被删的副本。'
+    const tail = outcome.dryRun
+      ? '确认无误后再次调用并显式传 dryRun:false 才会真正删除（删除前会先备份库文件）。'
+      : ''
+    return [head, differing, refs, tail].filter((part) => part.length > 0).join(' ')
+  }
+
+  return defineTool({
+    name: 'memory_dedupe',
+    description:
+      '维护操作：清理 L3 深层记忆库里同一 (sessionId, kind, turnFrom, turnTo) 的重复副本。'
+      + '**默认 dry-run**：只报告"计划删除多少条、哪些组"，不改库、不写盘；'
+      + '只有显式传 dryRun:false 才会真的删除记录——这是会删数据的操作。'
+      + '真删前会把当前库文件备份成 <库文件>.bak-<时间戳>，并把指向被删副本的 refs 改指保留的那条'
+      + '（组内正文不一致时保留最长的那条，并在结果里点名这些组）。'
+      + '幂等：没有重复时返回 removed: 0。'
+      + '什么时候用：memory_state 的 L3 读数里 duplicateGroups > 0，或 recall 结果里同一轮出现多份。',
+    parameters: {
+      dryRun: {
+        type: 'boolean',
+        description: '默认 true（只报告，库文件一个字节都不改）。只有显式传 false 才真正删除记录。',
+      },
+      sessionId: {
+        type: 'string',
+        description: '只处理该会话的重复组；不传则整库（跨会话）去重。',
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    presentCall: () => ({ card: 'generic', title: 'L3 dedupe (maintenance)', kind: 'read', rawInput: '' }),
+    // 会删数据：与其它工具并发执行会让"计划"与"实际删除"交错，必须串行。
+    isConcurrencySafe: () => false,
+    async execute(args: { dryRun?: boolean; sessionId?: string }) {
+      const outcome = runtime.dedupe({
+        dryRun: args?.dryRun !== false,
+        sessionId: typeof args?.sessionId === 'string' && args.sessionId.length > 0 ? args.sessionId : undefined,
+      })
+      return {
+        ...outcome,
+        // 明细可能很长（整库去重时上百组）：只带前 50 组，避免把维护操作的结果灌进上下文。
+        groupDetails: outcome.groupDetails.slice(0, 50),
+        groupDetailsShown: Math.min(50, outcome.groupDetails.length),
+        differingGroupDetails: outcome.differingGroupDetails.slice(0, 50),
+        summary: summarize(outcome),
+      }
+    },
+  })
+}
+
+/**
  * 构造验证工具。
  * @param runtime - 三层记忆运行时。
  * @returns 注册表就绪的工具定义。
@@ -359,20 +502,43 @@ export function buildVerifyTool(runtime: MemoryRuntime) {
           ? (readings.l3.backend === null
             ? `FAIL  L3 深层记忆：已启用但后端未打开（目录 ${readings.l3.dir}）。检查目录写权限。`
             : `PASS  L3 深层记忆：后端 ${readings.l3.backend}，整库 ${readings.l3.libraryCount} 条 / 约 ${readings.l3.libraryTokens} tokens`
-              + `（本会话 ${readings.l3.sessionCount} 条 / 约 ${readings.l3.sessionTokens} tokens）。`)
+              + `（本会话 ${readings.l3.sessionCount} 条 / 约 ${readings.l3.sessionTokens} tokens）；`
+              + `其中工具原始输出 ${readings.l3.toolCount} 条 / 约 ${readings.l3.toolTokens} tokens`
+              + '（独立细节池：不计入记录上限、不进注入、只可 recall）。')
           : 'SKIP  L3 深层记忆：已由配置关闭（l3.enabled=false）。',
       })
       verdicts.push({ id: 'engine', ok: arbitration.ok, text: `${arbitration.ok ? 'PASS' : 'WARN'}  ${arbitration.text}` })
 
+      // 重复副本是"看起来在工作、实际在拖后腿"的典型：recall 的 top-N 被同一轮的
+      // 多份副本占满，读数上却只表现为"库很大"。有重复就单独给一条 WARN 并指向
+      // memory_dedupe——它走 store 自己的写盘路径，不会触发双 owner 覆盖。
+      const duplicateGroups = readings.l3.duplicateGroups ?? 0
+      if (readings.l3.enabled && duplicateGroups > 0) {
+        const duplicateRecords = readings.l3.duplicateRecords ?? 0
+        verdicts.push({
+          id: 'L3-duplicates',
+          ok: false,
+          text: `WARN  L3 有 ${duplicateGroups} 个重复组、可删 ${duplicateRecords} 条`
+            + '（同 (sessionId, kind, turnFrom, turnTo) 的多份副本）。'
+            + '先用 memory_dedupe（默认 dry-run）看计划，确认后传 dryRun:false 让插件自己删；'
+            + '不要用 scripts/dedupe-l3.mjs 直连 sqlite——宿主运行时它的改动会被插件的内存快照整表覆盖回去。',
+        })
+      }
+
       const injection = readings.injection
       const overBudget = injection.requestedTokens > injection.budgetTokens
+      // 实际注入合计缺失（旧运行时对象）时退回"仲裁层 + 骨架"，不假装是 0。
+      const injectedTotal = injection.totalInjected
+        ?? (injection.usedTokens + (injection.mainlineTokens ?? 0))
       verdicts.push({
         id: 'budget',
         ok: !overBudget || injection.usedTokens <= injection.budgetTokens,
         text: injection.requestedTokens === 0
           ? 'SKIP  注入预算：本会话尚未注入过投影（会话刚开始，或 l1Inject/l2Inject 全关）。'
-          : `PASS  注入预算：本轮投影 ${injection.usedTokens}/${injection.budgetTokens} tokens`
-            + `（仲裁前 ${injection.requestedTokens}）`
+          : `PASS  注入预算：仲裁层 ${injection.usedTokens}/${injection.budgetTokens} tokens`
+            + `（仲裁前 ${injection.requestedTokens}）；`
+            + `骨架另 ${injection.mainlineTokens ?? 0} tokens（独立上限、不进仲裁）；`
+            + `本轮实际注入合计 ${injectedTotal} tokens`
             + (injection.truncated.length > 0 ? `，截断 ${injection.truncated.join('/')}` : '')
             + (injection.dropped.length > 0 ? `，丢弃 ${injection.dropped.join('/')}` : '')
             + '。',
@@ -394,7 +560,9 @@ export function buildVerifyTool(runtime: MemoryRuntime) {
           + 'outputChars 很大则是"模型写太长"，两条路的修法不同（前者调 internalCallReasoningEffort，后者收紧指令里的期望长度）。',
         '2c) 骨架 cause 没回填：看 mainline.causeFailure（同上三种 stage），以及 mainline.pendingCauses 是否达到 '
           + 'mainlineCauseMinBatch 的批量阈值——没到阈值时这一步根本不会触发，那不是失败。',
-        '3) recall 查不到：L3 只收 L2 淘汰下来的摘要；新内容仍在 L1/L2。先 memory_state 看覆盖区间。',
+        '3) recall 查不到：L3 主内容只收 L2 淘汰下来的摘要；新内容仍在 L1/L2。先 memory_state 看覆盖区间。'
+          + '工具输出单独成池（kind=tool）：它只按轮摘录、单轮最多 10 条结果，**不是全文存档**——'
+          + '记录头会写明"本轮共 N 条、本记录摘录 M 条"；没被摘录到的片段确实没有落库，需要时只能重跑/重读原文。',
         '4) 投影被截断/丢弃：注入预算不够。调大 injectionBudgetTokens，或把 l1Inject 设为 marker、'
           + 'l3InjectIndex 关掉——两者都只是索引，正文仍可用 recall 取回。',
         `5) 注入物成本审计：${auditAvailable
@@ -402,6 +570,9 @@ export function buildVerifyTool(runtime: MemoryRuntime) {
           : '未安装 dsh-context-doctor（GitHub-only）：`dsh plugin --profile desktop add "github:Zhenyu98/dsh-context-doctor#main"`。'}`,
         '6) 引擎仲裁 WARN：ctx.compaction 只允许一个实现。确认 cordis.patch.yml 中 compaction-basic 与 argp/instant/headroom 恰好一个未 disabled，'
           + '或把 integration.engine 改回 auto。',
+        '7) L3 有重复副本（verdicts 里的 L3-duplicates，或 layers.L3.duplicateGroups > 0）：'
+          + '用 memory_dedupe 先看 dry-run 计划，确认后传 dryRun:false 让插件自己删（删除前自动备份）。'
+          + '不要用外部脚本直连 sqlite——宿主运行时它的改动会被插件的内存快照整表覆盖回去。',
       ]
 
       return {

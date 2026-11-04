@@ -145,6 +145,116 @@ export type SummarizeOutcome =
   | { kind: 'failed'; message: string; attempt: DigestAttempt }
 
 /**
+ * 滚动摘要的额外规则（只在输入里带了上一份摘要时追加）。
+ *
+ * **为什么要单独写一段而不是改 `DIGEST_INSTRUCTION`**：那段指令是"压缩眼前这段原文"
+ * 的语义，而这个规则是"把旧摘要并进新摘要、别丢历史结论"。两者是不同任务；混写会
+ * 让没有上一份摘要的首次摘要也被要求"保留历史"，模型只能编。追加是显式的，也便于
+ * 测量脚本区分两种调用。
+ *
+ * 这条规则是本次 Bug 1 修复的**信息不丢**保证：输入里给了旧摘要，但模型完全可以
+ * 只总结新增轮次、把旧结论整段丢掉——那会让覆盖区间看起来是 24 轮、实际仍是 3 轮
+ * 的信息量。规则必须直接禁止这种"只总结新的"。
+ */
+const ROLLING_DIGEST_RULES = [
+  '',
+  '- A PREVIOUS digest is included above. It covers earlier turns that are NO LONGER in the excerpt.',
+  '- Produce ONE merged digest for the whole window: keep every still-valid goal, decision, file path, constraint, error string and open question from the previous digest, and fold in the new turns.',
+  '- Never drop an older item merely because it is old; drop it only when it is explicitly superseded or no longer relevant.',
+].join('\n')
+
+/**
+ * 把"上一份摘要 + 本轮新增轮原文"渲染成摘要输入。
+ *
+ * **为什么不是每次都把 24 轮原文全量重算**（实测数字见 .tmp-fix/sim-l2-window.mjs）：
+ * 同一份冻结快照、同样 37 次刷新，全量重算输入合计 1,434,845 tok、均值 38,780 tok/次；
+ * 滚动方案均值 6,740 tok/次（1.25x 于旧的"只喂增量"），而覆盖区间同样是 24 轮。
+ * 全量是 7.2 倍成本，换来的只是"窗口内原文重新读一遍"——旧摘要已经承载了窗口外
+ * 更早轮次的信息，而窗口内原文在上一轮刷新时刚被读过。
+ *
+ * **为什么必须带上一份摘要**：只喂新增轮会让模型只看见 3 轮，输出自然只剩 3 轮
+ * （这正是修复前的塌缩机制）。带上旧摘要后，模型面对的是"24 轮窗口的延续"：
+ * 输入里既有旧区间（88–111）的结论，也有新增区间（112–114）的原文。
+ *
+ * @param spans - 本轮新增的轮跨度（缺口时是全窗口）。
+ * @param previousText - 上一份摘要正文；`undefined` = 首次摘要，输入只有原文。
+ * @returns 供摘要模型阅读的正文。
+ */
+export function renderDigestInput(spans: readonly TurnSpan[], previousText: string | undefined): string {
+  const fresh = renderTurnsForSummary(spans)
+  if (previousText === undefined || previousText.trim().length === 0) return fresh
+  return [
+    '## 上一份摘要（覆盖更早的轮次；其中仍然有效的结论必须保留）',
+    previousText.trim(),
+    '',
+    '## 新增轮次原文',
+    fresh,
+  ].join('\n')
+}
+
+/**
+ * 把上一份摘要与本次抽取结果**按节合并**（确定性回退时也不能丢历史）。
+ *
+ * 为什么需要：`buildDigest` 的抽取式回退是"模型不可用"时的唯一产物，而抽取式
+ * 只看本次传入的轮次。如果回退时直接用 `extractiveDigest(spans)` 覆盖旧摘要，
+ * 那么一次模型故障就会让 L2 从 24 轮退回 3 轮——**修复了 LLM 路径却留下一条
+ * 同样塌缩的回退路径**，属于"看起来在工作、实际没工作"的典型。
+ *
+ * 合并规则：
+ * - 按 `## 标题` 分节，旧摘要的节顺序与条目优先保留；
+ * - 新条目去重后追加到同名节；新出现的节追加在末尾；
+ * - 每节最多保留最后 24 条（`extractiveDigest` 本身也只保留 12 条结论），
+ *   避免旧摘要 + 新抽取无限膨胀；
+ * - 某节没有任何条目时写 `- (none)`，保持与 `extractiveDigest` 同形。
+ *
+ * @param previous - 上一份摘要正文。
+ * @param fresh - 本次抽取结果正文。
+ * @returns 合并后的摘要正文。
+ */
+export function mergeExtractiveDigest(previous: string, fresh: string): string {
+  const parse = (text: string): Map<string, string[]> => {
+    const sections = new Map<string, string[]>()
+    let current = ''
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trimEnd()
+      const header = /^##\s+(.+?)\s*$/.exec(line)
+      if (header !== null) {
+        current = header[1] ?? ''
+        if (!sections.has(current)) sections.set(current, [])
+        continue
+      }
+      if (current.length === 0) continue
+      const body = line.trim()
+      if (body.length === 0 || body === '- (none)') continue
+      sections.get(current)?.push(body)
+    }
+    return sections
+  }
+  const merged = new Map<string, string[]>()
+  for (const [title, lines] of parse(previous)) merged.set(title, [...lines])
+  for (const [title, lines] of parse(fresh)) {
+    const target = merged.get(title)
+    if (target === undefined) {
+      merged.set(title, [...lines])
+      continue
+    }
+    const seen = new Set(target)
+    for (const line of lines) {
+      if (seen.has(line)) continue
+      target.push(line)
+      seen.add(line)
+    }
+  }
+  const out: string[] = []
+  for (const [title, lines] of merged) {
+    out.push(`## ${title}`)
+    out.push(...(lines.length > 0 ? lines.slice(-24) : ['- (none)']))
+    out.push('')
+  }
+  return out.join('\n').trimEnd()
+}
+
+/**
  * 用 LLM 生成一段短期记忆摘要。
  *
  * **撞到输出上限时不再丢弃正文**（这是本函数的核心纪律）。旧行为是
@@ -179,14 +289,22 @@ export async function summarizeWithLlm(
   llm: LlmSeam,
   target: { provider: string; model: string },
   excerpt: string,
-  options: { maxTokens: number; sessionId: string; signal?: AbortSignal; reasoningEffort?: string },
+  options: {
+    maxTokens: number
+    sessionId: string
+    signal?: AbortSignal
+    reasoningEffort?: string
+    /** 覆盖默认的摘要指令（滚动摘要要追加"保留历史要点"的规则）。 */
+    instruction?: string
+  },
 ): Promise<SummarizeOutcome> {
+  const instruction = options.instruction ?? DIGEST_INSTRUCTION
   const buildRequest = (effort: string | undefined): Record<string, unknown> => ({
     provider: target.provider,
     model: target.model,
     messages: [
       createUserMessage({
-        content: [{ type: 'text', text: `${excerpt}\n\n---\n\n${DIGEST_INSTRUCTION}` }],
+        content: [{ type: 'text', text: `${excerpt}\n\n---\n\n${instruction}` }],
         source: { kind: PLUGIN_SOURCE_KIND },
       }),
     ],
@@ -253,8 +371,9 @@ export async function summarizeWithLlm(
  * 真实会话里 L2 长期是抽取式，排查时无从下手，就是因为这一行。
  *
  * @param llm - `ctx.llm` seam，缺失时直接走抽取。
- * @param spans - 待压缩轮跨度。
- * @param options - 模式、上限、会话 id、信号、agent（解析 provider/model）、reasoningEffort。
+ * @param spans - 本轮**喂给模型**的轮跨度（新增轮；缺口时是完整窗口）。
+ * @param options - 模式、上限、会话 id、信号、agent（解析 provider/model）、reasoningEffort，
+ *   以及滚动摘要需要的 `previousText` / `windowFrom` / `windowTo`。
  * @returns 摘要结果（含出处、回退原因、本次调用读数与压缩率输入）；模式为 off 或无内容时为 null。
  */
 export async function buildDigest(
@@ -268,26 +387,49 @@ export async function buildDigest(
     signal?: AbortSignal
     /** 摘要调用带的推理档位；`inherit`/缺省 = 不带该字段。 */
     reasoningEffort?: string
+    /**
+     * 上一份摘要正文（滚动摘要用）。
+     *
+     * 有它时：输入 = 上一份摘要 + 本批原文，指令追加"保留历史要点"的规则，
+     * 抽取式回退也按节合并而不是覆盖。这是"覆盖区间 24 轮"与"信息不丢"
+     * 同时成立的必要条件——只喂新增轮，模型只会总结新增轮。
+     */
+    previousText?: string
+    /**
+     * 输出区间（`DigestResult.turnFrom/turnTo`）。缺省用 `spans` 首尾。
+     *
+     * 为什么要能单独指定：滚动摘要喂的是**新增轮**，但摘要声明覆盖的是整个
+     * L2 窗口（最近 `l2RetainTurns` 轮）。两者不一致时（修复前的塌缩正是
+     * "声明区间 = 输入区间"造成的），注入读数会随刷新次数缩到 3 轮。
+     */
+    windowFrom?: number
+    windowTo?: number
   },
 ): Promise<DigestResult | null> {
   if (options.mode === 'off' || spans.length === 0) return null
-  const excerpt = renderTurnsForSummary(spans)
+  const previousText = options.previousText === undefined || options.previousText.trim().length === 0
+    ? undefined
+    : options.previousText.trim()
+  const excerpt = renderDigestInput(spans, previousText)
   const first = spans[0]
   const last = spans[spans.length - 1]
   const base = {
-    turnFrom: first?.turn ?? 0,
-    turnTo: last?.turn ?? 0,
+    turnFrom: options.windowFrom ?? first?.turn ?? 0,
+    turnTo: options.windowTo ?? last?.turn ?? 0,
     sourceTokens: sourceTokensOf(excerpt),
     createdAt: Date.now(),
   }
   // 配置为 extractive 时本来就不该调模型：这不是失败，不带 fallback。
   if (options.mode !== 'llm') {
-    const text = extractiveDigest(spans)
+    const fresh = extractiveDigest(spans)
+    const text = previousText === undefined ? fresh : mergeExtractiveDigest(previousText, fresh)
     return { ...base, text, via: 'extractive', tokens: sourceTokensOf(text) }
   }
 
   const failure = (stage: DigestFailure['stage'], message: string, attempt?: DigestAttempt): DigestResult => {
-    const text = extractiveDigest(spans)
+    // 回退时同样合并旧摘要：模型故障不能让 L2 从 24 轮退回 3 轮。
+    const fresh = extractiveDigest(spans)
+    const text = previousText === undefined ? fresh : mergeExtractiveDigest(previousText, fresh)
     return {
       ...base,
       text,
@@ -320,6 +462,11 @@ export async function buildDigest(
     const outcome = await summarizeWithLlm(llm, target, excerpt, {
       maxTokens: options.maxTokens,
       sessionId: options.sessionId,
+      // 有上一份摘要时追加"合并历史"的规则：否则模型完全可能只总结新增的 3 轮，
+      // 让"输入里带了旧摘要"变成摆设（覆盖区间对、信息量不对）。
+      instruction: previousText === undefined
+        ? DIGEST_INSTRUCTION
+        : `${DIGEST_INSTRUCTION}${ROLLING_DIGEST_RULES}`,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.reasoningEffort === undefined ? {} : { reasoningEffort: options.reasoningEffort }),
     })

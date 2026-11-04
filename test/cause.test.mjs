@@ -1057,8 +1057,14 @@ test('端到端（假 LLM 回放真实请求）：标题顺利 + 摘录只有报
     // 核心：那两条的 cause 不许是那条工具报错（真机骨架里逐字是"目标子代理已不存在"）。
     assert.doesNotMatch(skeleton, /目标子代理已不存在/, '工具报错不许再进骨架当因果')
     assert.doesNotMatch(skeleton, /active teammate/, '报错原文（或其片段）也不许被抄进 cause')
-    assert.match(skeleton, /第 32 轮: 两份研究都在推进 — 原因不明/)
-    assert.match(skeleton, /第 35 轮: 移植完成，修复轮在跑 — 原因不明/)
+    // 剪枝后的两条，正是两种处置的样本：
+    // - 第 32 轮：标题只是"在推进"（不是结论），cause 是这一行唯一的状态线索 → 保留；
+    // - 第 35 轮：标题自身是结论（"移植完成"）→ 去掉模板标签"原因不明"，标题留下。
+    assert.match(skeleton, /第 32 轮: 两份研究都在推进 — 原因不明/,
+      '标题不是结论时，cause 是这一行唯一的状态线索，必须留着')
+    assert.match(skeleton, /第 35 轮: 移植完成，修复轮在跑/,
+      '标题自身是结论时，模板标签被剪掉——删的是尾巴，不是里程碑')
+    assert.doesNotMatch(skeleton, /第 35 轮: 移植完成，修复轮在跑 — 原因不明/)
     // 指令段必须随请求一起发出去（模型看不到那条一般判据，就只剩报错可写）。
     assert.match(body, /报错只说明"当时发生了什么"/, '一般判据必须在请求里')
     // L3 里同样不许留下那句报错当因果（回填是两处落点，见 syncMilestoneRecords）。
@@ -1103,9 +1109,18 @@ test('「原因不明」仍然是被允许的输出：解析 → 回填 → 骨�
     respond: () => JSON.stringify({ 1: '原因不明', 2: '原因不明', 3: '原因不明', 4: '原因不明' }),
   })
   try {
-    assert.equal([...skeletonOf(text).matchAll(/— 原因不明/g)].length, 4, '四条都该写成"原因不明"')
-    assert.ok(readRecords(dir).some((r) => r.kind === 'milestone' && r.text.includes('原因不明')),
-      'L3 记录同样要带上"原因不明"')
+    // 注入侧：这四条标题都带领域锚点（"记忆压缩任务"），模板标签"原因不明"被剪掉；
+    // 但**回填本身必须被接受**——它落在 L3 记录里，一条都不能少。
+    // 剪枝只发生渲染，不影响"诚实地说不知道"是被许可的输出。
+    assert.equal([...skeletonOf(text).matchAll(/— 原因不明/g)].length, 0,
+      '模板标签不进注入（剪枝验收点）')
+    const rows = [...skeletonOf(text).matchAll(/^\s+\d+\. 第 .+ 轮: /gm)]
+    assert.equal(rows.length, 4, `四条里程碑标题必须都还在（删的是尾巴），实际 ${rows.length}`)
+    const records = readRecords(dir).filter((r) => r.kind === 'milestone')
+    // 4 条回填里至少 3 条以 milestone 记录落库（任务条目另有落点），每条的正文都必须带
+    // "原因不明"——回填确实被接受，剪枝只发生在注入渲染。
+    assert.ok(records.filter((r) => r.text.includes('原因不明')).length >= 3,
+      `L3 记录里必须有带"原因不明"的里程碑，实际 ${records.filter((r) => r.text.includes('原因不明')).length}/${records.length}`)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

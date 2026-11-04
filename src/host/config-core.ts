@@ -111,6 +111,20 @@ export interface TriLayerConfig {
   l3PruneMinScore: number
   /** 是否把 L3 索引（不注入正文）附到每轮请求。 */
   l3InjectIndex: boolean
+  /**
+   * 是否把**工具输出**摘录成 `tool` 记录落进 L3（默认开）。
+   *
+   * 关掉 = 行为回到 v0.1.24：工具正文整段丢弃，只留 turn 摘要与工具名清单。
+   * 单独给一个开关（而不是塞进 `l3Distill`）的理由：工具记录是唯一会按"轮"额外
+   * 膨胀的类别，用户要能一键退回旧体积，而不必连 turn 蒸馏一起关掉。
+   */
+  l3ToolDistill: boolean
+  /** 单条工具记录正文字符上限。 */
+  l3ToolRecordChars: number
+  /** 每会话最多几条工具记录（超出后不再写；不删已有记录）。 */
+  l3ToolMaxPerSession: number
+  /** 整库最多几条工具记录（超出后滚动淘汰最旧的工具记录）。 */
+  l3ToolMaxRecords: number
 
   // ── 主线骨架 ─────────────────────────────────────────────────────────
   /**
@@ -170,7 +184,9 @@ export interface TriLayerConfig {
    * 每轮三层投影允许占用的 token 上限。
    *
    * 超出后按优先级仲裁：L1 标记（最便宜、锚定原文可信度）> L2 摘要（信息载荷，
-   * 可截断）> L3 索引（只是索引，可丢弃，需要时用 recall 查）。
+   * 可截断）> L3 索引（约 80 tok，**不参与零和竞争**：它有保底位，放不下时退成
+   * 一行计数而不是整块消失——索引是"模型知道可以去 recall"的唯一入口，丢了它
+   * 等于让整层记忆对模型不可见）。
    * 这是"组合社区压缩插件"的落点——多个注入方共存时，由本插件负责分配。
    */
   injectionBudgetTokens: number
@@ -221,6 +237,17 @@ export const DEFAULTS: TriLayerConfig = {
   l3MaxRecords: 500,
   l3PruneMinScore: 0.25,
   l3InjectIndex: true,
+  // 工具细节池：默认开。三个上限的乘法就是硬上界——
+  //   单条 3000 字符 × 每会话 24 条 = 72,000 字符/会话（ASCII ≈ 18k tokens）
+  //   整库 96 条 × 3000 = 288,000 字符（ASCII ≈ 72k tokens；CJK 最坏 288k tokens）
+  // 3000 字符：实测该会话工具结果平均 931 字符、最长 50,000；3000 能让大多数结果
+  // 整条放下，又不会让一条 recall 命中就吃掉几千 token。
+  // 24 条/会话：等于"每个有工具输出的轮一条"覆盖前 24 轮；再往后会话仍会产 turn
+  // 摘要，只是不再留工具原文——细节池的目的本来就是"最早被遗忘的那段"。
+  l3ToolDistill: true,
+  l3ToolRecordChars: 3000,
+  l3ToolMaxPerSession: 24,
+  l3ToolMaxRecords: 96,
 
   mainlineEnabled: true,
   mainlineInject: true,
@@ -304,6 +331,13 @@ export function resolveConfig(raw: unknown): TriLayerConfig {
     l3MaxRecords: clampInt(s.l3MaxRecords, 16, 100_000, DEFAULTS.l3MaxRecords),
     l3PruneMinScore: Math.min(1, Math.max(0, pruneScore)),
     l3InjectIndex: pickBool(s.l3InjectIndex, DEFAULTS.l3InjectIndex),
+    l3ToolDistill: pickBool(s.l3ToolDistill, DEFAULTS.l3ToolDistill),
+    // 下限 400：低于它连"头部行 + 一条槽位"都放不下，落库只会得到一堆残句；
+    // 上限 20000：再长就接近"整段原文"，与细节池的定位矛盾。
+    l3ToolRecordChars: clampInt(s.l3ToolRecordChars, 400, 20_000, DEFAULTS.l3ToolRecordChars),
+    // 上限 500：与 l3MaxRecords 同量级；工具池再大就已经不是"细节"而是第二份全文库。
+    l3ToolMaxPerSession: clampInt(s.l3ToolMaxPerSession, 1, 500, DEFAULTS.l3ToolMaxPerSession),
+    l3ToolMaxRecords: clampInt(s.l3ToolMaxRecords, 1, 20_000, DEFAULTS.l3ToolMaxRecords),
 
     mainlineEnabled: pickBool(s.mainlineEnabled, DEFAULTS.mainlineEnabled),
     mainlineInject: pickBool(s.mainlineInject, DEFAULTS.mainlineInject),

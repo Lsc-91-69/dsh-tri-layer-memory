@@ -14,6 +14,12 @@ node_modules/
 .cause-verify/
 .profile-guard/
 .tmp/
+# 各项体检/测量的工作目录。它们都含**真实会话日志副本与 L3 库拷贝**——
+# 里面有真实会话 ID 和完整对话正文，绝不该进公开仓库。
+# 用前缀统一忽略：新开一个 .tmp-<任务>/ 不必再改这个文件。
+.tmp-*/
+# memory_dedupe 的验收副本（含真库拷贝与真实会话 ID），同样只在本机使用。
+.tmp-dedupe-tool/
 
 .vscode/
 .idea/

@@ -130,7 +130,7 @@ export const COMPONENTS: MemoryComponent[] = [
 ]
 
 /** 本插件自己的稳定入口工具（不含可改名的 recall）。 */
-export const MEMORY_TOOLS = ['memory_state', 'memory_verify'] as const
+export const MEMORY_TOOLS = ['memory_state', 'memory_verify', 'memory_dedupe'] as const
 
 /**
  * 本包**随附**（= 由 cordis.patch.yml 插入行）的组件 id。
@@ -336,6 +336,10 @@ export function buildStatus(
       requestedTokens: number
       dropped: string[]
       truncated: string[]
+      /** 含骨架的实际注入合计（与诊断文件同源；旧读数对象可能没有）。 */
+      totalInjected?: number
+      /** 骨架块的渲染后 token（独立于仲裁预算）。 */
+      mainlineTokens?: number
     }
     recallTool: { name: string; reason: string }
   },

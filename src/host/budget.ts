@@ -18,7 +18,7 @@
  * @module dsh-tri-layer-memory/budget
  */
 import { estimateTokens } from './l1-working.ts'
-import { renderMainline } from './milestones.ts'
+import { pruneMainlineForInjection, renderMainline, renderPrunedMainline } from './milestones.ts'
 import type { Milestone } from './milestones.ts'
 
 /** 参与仲裁的一块注入内容。 */
@@ -42,6 +42,29 @@ export interface InjectionBlock {
    * 摘要的正文不在 L3 里（见 {@link L2_TRUNCATION_NOTE}）。
    */
   truncationNote?: string
+  /**
+   * 是否为这块预留额度（而不是按优先级排队抢剩下的）。
+   *
+   * **为什么 L3 索引必须预留**：L3 索引是"模型知道还有东西可以 recall"的唯一入口，
+   * 约 80–120 tokens，价值/体积比是全插件最高的。而旧实现让它排在 L2 后面抢剩余
+   * 预算——预算 1000 时 L2 恰好不再被截断、吃满预算，L3 就被整块丢弃（实测
+   * `dropped: ["l3"]`、`l3Tokens: 0`）。一个"调高预算反而更差"的非单调结果，
+   * 根因不是预算不够，而是**没有保底**：索引这种"没有替代品"的块不能参与零和竞争。
+   *
+   * 预留额度会在其他块之前从预算里扣掉；未用完的部分仍会回到公共池（见
+   * {@link arbitrateInjection} 的实现），所以它不会白占预算。
+   */
+  pinned?: boolean
+  /**
+   * 保底形态：整块放不下时至少注入这段（一行）。
+   *
+   * 与 {@link truncationNote} 的分工：截断是"把正文切一半再补一句收尾"，它要求正文
+   * 本身可切；L3 索引切成半截就是一行断句，没有行动价值。所以索引的降级形态是
+   * 重新渲染的**一行**（`另有 N 条可 recall`），而不是截断。
+   *
+   * 只在 `pinned === true` 时生效。
+   */
+  floorText?: string
 }
 
 /** 仲裁结果。 */
@@ -52,6 +75,13 @@ export interface Arbitration {
   dropped: string[]
   /** 被截断的块 id。 */
   truncated: string[]
+  /**
+   * 被降级成保底形态（{@link InjectionBlock.floorText}）的块 id。
+   *
+   * 与 {@link truncated} 分开报：一个是"正文被切短"，一个是"换成了另一份更短的
+   * 渲染"。混在一起，报告就无法回答"这一层到底还剩多少信息"。
+   */
+  degraded: string[]
   /** 保留内容的总估算 token 数。 */
   tokens: number
   /** 本次使用的预算。 */
@@ -113,14 +143,35 @@ function truncateToFit(block: InjectionBlock, remaining: number): string | null 
 }
 
 /**
+ * 保底块（pinned）预留**完整**形态的条件：留下完整索引后，其他块至少还能分到
+ * 这么多 token。
+ *
+ * **为什么需要这条门槛**：预算最紧时（实测 200）如果无条件为 L3 索引预留完整
+ * 形态，摘要会被挤成 0；反过来，无条件只留一行又会让充裕预算下的完整索引也消失。
+ * 120 是"摘要块头 + 覆盖区间 + 一句结论"的量级，低于它摘要就不再可读。
+ *
+ * 于是 200 档得到 L1(≈30) + L2(≈140) + L3 一行(≈30)，而 400 档及以上得到
+ * 完整索引（≈120 + L2）。两档的保留内容都是**严格增加**的，不会出现旧实现里
+ * "1000 比 800 更差"的非单调。
+ */
+const PINNED_FULL_ROOM = 120
+
+/**
  * 按预算仲裁注入块。
  *
  * 规则：
- * 1. 按优先级升序依次尝试放入；能整块放下就整块放。
+ * 0. `pinned` 块（L3 索引）先预留额度：能留下完整形态且不影响摘要最低份额时留完整，
+ *    否则留一行保底形态。**预留额度不占用别处的空间**——没用完的部分回公共池。
+ * 1. 其余块按优先级升序依次尝试放入；能整块放下就整块放。
  * 2. 放不下但剩余预算还够 {@link MIN_TRUNCATED_CHARS} 个字符，就截断填入。
  * 3. 剩余预算太少则丢弃该块，并继续尝试优先级更低的块
  *    （低优先级块可能更小，仍有机会放进剩余空间）。
  * 4. `truncatable: false` 的块要么整块保留，要么整块丢弃——截断会破坏它的语义。
+ *
+ * **为什么把保底放在最前面**：旧实现完全按 `priority` 排队（L1 → L2 → L3），
+ * 而 L2 是"能被截断、也会吃满剩余"的块。预算一高，L2 不再截断、整块放入，
+ * L3 就一个 token 都不剩——**提高预算反而丢掉一层**。保底把"不可替代的索引"
+ * 从零和竞争里摘出来：预算升高只会让它从一行升到完整，形态单调不变差。
  *
  * @param blocks - 待仲裁的块（顺序无关，按 `priority` 处理）。
  * @param budgetTokens - 本次允许的 token 上限。
@@ -137,21 +188,50 @@ export function arbitrateInjection(
   const kept: InjectionBlock[] = []
   const dropped: string[] = []
   const truncated: string[] = []
-  let used = 0
+  const degraded: string[] = []
 
+  // ── 阶段 0：为 pinned 块预留额度 ──────────────────────────────────────
+  // 先扣掉"既不可截断、也不参与竞争"的块（L1 标记）：它是原文可信度的锚点，
+  // 被保底块挤掉就整块消失，所以它的成本必须从可预留预算里先扣除。
+  const hardCost = ordered
+    .filter((block) => block.pinned !== true && !block.truncatable)
+    .reduce((sum, block) => sum + estimateTokens(block.text), 0)
+
+  // 只记"这个块预留了多少"；形态在阶段 2 按实际剩余预算重新判断（可能升级）。
+  const reservedCost = new Map<string, number>()
+  let reserved = 0
   for (const block of ordered) {
+    if (block.pinned !== true) continue
+    const fullCost = estimateTokens(block.text)
+    const floorCost = block.floorText === undefined ? fullCost : estimateTokens(block.floorText)
+    const room = Math.max(0, budget - hardCost - reserved)
+    // 有保底形态时，只有"留完整形态后仍够摘要最低份额"才预留完整成本。
+    // 没有保底形态的 pinned 块只能整块留或整块丢（语义与 truncatable:false 一致）。
+    const keepFull = block.floorText === undefined || room - fullCost >= PINNED_FULL_ROOM
+    const cost = keepFull ? fullCost : floorCost
+    if (cost > room) continue
+    reservedCost.set(block.id, cost)
+    reserved += cost
+  }
+
+  // ── 阶段 1：非 pinned 块按优先级分配"公共池" ──────────────────────────
+  // 公共池 = 总预算 − 已预留。预留没用完的部分会在阶段 2 自动回流。
+  const openBudget = Math.max(0, budget - reserved)
+  let usedByOpen = 0
+  for (const block of ordered) {
+    if (block.pinned === true) continue
     const cost = estimateTokens(block.text)
-    const remaining = budget - used
+    const remaining = openBudget - usedByOpen
     if (cost <= remaining) {
       kept.push(block)
-      used += cost
+      usedByOpen += cost
       continue
     }
     if (block.truncatable) {
       const truncatedText = truncateToFit(block, remaining)
       if (truncatedText !== null) {
         kept.push({ ...block, text: truncatedText })
-        used += estimateTokens(truncatedText)
+        usedByOpen += estimateTokens(truncatedText)
         truncated.push(block.id)
         continue
       }
@@ -159,10 +239,46 @@ export function arbitrateInjection(
     dropped.push(block.id)
   }
 
+  // ── 阶段 2：pinned 块落地 ─────────────────────────────────────────────
+  // 按"总预算 − 已用"判断形态。公共池没花完时这里会自动升级成完整形态，
+  // 这正是"预算升高 → 结果不减少"的那一半保证。
+  let used = usedByOpen
+  for (const block of ordered) {
+    if (block.pinned !== true) continue
+    const plan = reservedCost.get(block.id)
+    if (plan === undefined) {
+      dropped.push(block.id)
+      continue
+    }
+    const available = budget - used
+    const fullCost = estimateTokens(block.text)
+    if (available >= fullCost) {
+      kept.push(block)
+      used += fullCost
+      continue
+    }
+    const floorCost = block.floorText === undefined ? fullCost : estimateTokens(block.floorText)
+    if (block.floorText !== undefined && available >= floorCost) {
+      kept.push({ ...block, text: block.floorText })
+      used += floorCost
+      degraded.push(block.id)
+      continue
+    }
+    dropped.push(block.id)
+  }
+
   // 按优先级排回去，让投影读起来仍是 L1 → L2 → L3（调用方传入的顺序不作数）。
   kept.sort((a, b) => a.priority - b.priority)
 
-  return { kept, dropped, truncated, tokens: used, budgetTokens: budget, requestedTokens: requested }
+  return {
+    kept,
+    dropped,
+    truncated,
+    degraded,
+    tokens: used,
+    budgetTokens: budget,
+    requestedTokens: requested,
+  }
 }
 
 /**
@@ -198,6 +314,17 @@ export interface MainlineFit {
   maxMilestones: number
   /** 是否发生过裁剪（报告用：静默裁剪比裁剪本身更危险）。 */
   trimmed: boolean
+  /**
+   * 因"标题也是空话"而整条不注入的条数（信息量剪枝，与上限裁剪无关）。
+   *
+   * 单独计数而不是并进 {@link dropped}：两者语义不同——一个是"装不下"，
+   * 一个是"不值得装"。混在一起，报告就无法回答"省下来的到底是预算还是废话"。
+   */
+  infoPruned: number
+  /** 因"标题自身就是结论"而只去掉 cause 的条数。 */
+  causeStripped: number
+  /** 信息量剪枝相对全量骨架省下的估算 token（未裁上限时）。 */
+  prunedTokens: number
 }
 
 /**
@@ -229,17 +356,24 @@ export function fitMainline(
   const budget = Math.max(0, Math.trunc(maxTokens))
   const cap = Math.max(0, Math.trunc(maxMilestones))
 
+  // 信息量剪枝先于上限裁剪：模板 cause 和纯空话条目本来就不该占"最近 N 条"的名额。
+  // 顺序反过来的话，60 条上限里会先被空话占满，真实条目再被这条上限挤出去——
+  // 那等于给废话发预算。清单（dropped/stripped）留在结果里供人工复核。
+  const pruned = pruneMainlineForInjection(milestones)
+  const fullTokens = estimateTokens(renderMainline(milestones, taskTitle))
+  const prunedFullTokens = estimateTokens(renderPrunedMainline(pruned.lines, taskTitle))
+
   // 条数上限先夹一次：留最近的，理由与 token 裁剪一致。
-  let kept = cap === 0 ? [] : milestones.slice(Math.max(0, milestones.length - cap))
-  let dropped = milestones.length - kept.length
-  let text = renderMainline(kept, taskTitle)
+  let kept = cap === 0 ? [] : pruned.lines.slice(Math.max(0, pruned.lines.length - cap))
+  let dropped = pruned.lines.length - kept.length
+  let text = renderPrunedMainline(kept, taskTitle)
 
   // token 上限是**渲染后**实测的：块头、标题行、行号前缀都算在内，
   // 这样"装得下"就是真的装得下，而不是按条目数估算出来的假保证。
   while (kept.length > 0 && estimateTokens(text) > budget) {
     kept = kept.slice(1)
     dropped += 1
-    text = renderMainline(kept, taskTitle)
+    text = renderPrunedMainline(kept, taskTitle)
   }
 
   return {
@@ -250,5 +384,8 @@ export function fitMainline(
     maxTokens: budget,
     maxMilestones: cap,
     trimmed: dropped > 0,
+    infoPruned: pruned.dropped.length,
+    causeStripped: pruned.stripped.length,
+    prunedTokens: fullTokens - prunedFullTokens,
   }
 }

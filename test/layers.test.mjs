@@ -16,6 +16,8 @@ import { join } from 'node:path'
 
 import {
   estimateTokens,
+  isProjectionEvent,
+  pendingWindowInput,
   projectTurns,
   projectWorkingWindow,
   renderWorkingMemory,
@@ -167,10 +169,242 @@ test('L1 token 估算必须来自正文，不能来自字符计数（回归）',
   assert.ok(window.tokens <= window.charCount,
     `token 估算 ${window.tokens} 不应超过字符数 ${window.charCount}`)
 
-  // 渲染出来的数字必须与 window.tokens 一致。
+  // 注入块**不再**渲染这个数字：它长得像限额，实测被误读过两次（见 renderWorkingMemory
+  // 的注释）。但"注入里不许出现估算占用"本身也是剪枝的验收点，要钉住。
   const marker = renderWorkingMemory(window, 'marker')
-  assert.match(marker, new RegExp(`约 ${window.tokens} tokens`),
-    '注入块里的估算占用应与 window.tokens 同源')
+  assert.ok(marker !== null, 'marker 形态必须有输出')
+  assert.doesNotMatch(marker, /估算占用/, '注入块不得再带估算占用行')
+  assert.ok(estimateTokens(marker) <= 60,
+    `L1 marker 应只剩块头+一行窗口事实，实际 ${estimateTokens(marker)} tokens`)
+})
+
+/** 造一条本插件注入的投影消息，形状与真实会话日志一致（source.kind + 完整头部行）。 */
+function projectionEvent(seq, sections = ['## L1 工作记忆（Working Memory）', '## L2 短期记忆（Short-term Memory）', '## L3 深层记忆（Deep Memory）']) {
+  return {
+    type: 'user/message',
+    seq,
+    data: {
+      content: [{ type: 'text', text: `# 三层记忆 · 本轮投影\n\n${sections.join('\n- x\n\n')}\n- 估算占用：约 999 tokens` }],
+      source: { kind: 'dsh-tri-layer-memory', form: 'snapshot', sections: [{ name: 'dsh-tri-layer-memory', text: 'x' }] },
+    },
+  }
+}
+
+test('投影识别：本插件注入的投影被认出来（真实日志形状，含 source.kind）', () => {
+  assert.equal(isProjectionEvent(projectionEvent(1)), true)
+  // 预算仲裁会把某个块整块丢掉：只有两个层标题也必须是投影（实测 209 条里有 13 条如此）。
+  assert.equal(isProjectionEvent(projectionEvent(2, ['## L1 工作记忆（Working Memory）', '## L3 深层记忆（Deep Memory）'])), true)
+})
+
+test('投影识别：用户粘贴同样的文本不会被误吞（source.kind 是强判据）', () => {
+  const pasted = projectionEvent(1)
+  pasted.data.source = { kind: 'user' }
+  assert.equal(isProjectionEvent(pasted), false, '来源是 user 的同样文本必须当真对话')
+
+  // 更狠的一种：头部行 + 只贴了一个层标题（没贴整份投影）。
+  const partial = {
+    type: 'user/message',
+    seq: 2,
+    data: {
+      content: [{ type: 'text', text: '# 三层记忆 · 本轮投影\n\n## L1 工作记忆（Working Memory）\n这段是我抄的' }],
+      source: { kind: 'user' },
+    },
+  }
+  assert.equal(isProjectionEvent(partial), false)
+})
+
+test('投影识别：没有 source 的旧日志退回"头部行 + 至少两个层标题"', () => {
+  const bare = projectionEvent(1)
+  delete bare.data.source
+  assert.equal(isProjectionEvent(bare), true, '旧日志也要能认出来')
+
+  const barePartial = {
+    type: 'user/message',
+    seq: 2,
+    data: { content: [{ type: 'text', text: '# 三层记忆 · 本轮投影\n\n## L1 工作记忆（Working Memory）\n用户抄的一段' }] },
+  }
+  assert.equal(isProjectionEvent(barePartial), false, '只贴一个层标题不算整份投影')
+})
+
+test('projectTurns：投影不进正文、不进 token、不进 L2 摘要输入（回归）', () => {
+  // 真实故障：投影是 user 消息，于是被当成"未压缩的对话原文"。实测某会话最近 8 轮里
+  // 84,087 / 127,101 tokens（55%）是插件自己历次注入的投影；而 L2 摘要的输入里也掺着
+  // 它（一次摘要因此多读 47,031 字符）。
+  const events = [
+    { type: 'turn/start', seq: 0, data: { turn: 1 } },
+    { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: '真正的问题' }] } },
+    projectionEvent(2),
+    projectionEvent(3),
+    { type: 'assistant/message', seq: 4, data: { message: { content: [{ type: 'text', text: '真正的回答' }] } } },
+    { type: 'turn/end', seq: 5, data: { turn: 1 } },
+  ]
+  const [span] = projectTurns(events)
+  assert.equal(span.projections, 2, '两条投影应被计数')
+  assert.deepEqual(span.userText, ['真正的问题'], '投影不得进 userText（那是 L2 摘要的输入）')
+  assert.deepEqual(span.messageSeqs, [1, 4], '投影不得进 messageSeqs')
+  assert.equal(span.charCount, '真正的问题'.length + '真正的回答'.length, 'charCount 只算真对话')
+  assert.equal(span.tokens, estimateTokens('真正的问题') + estimateTokens('真正的回答'))
+})
+
+test('projectWorkingWindow：投影让窗口变空时补足"真实对话轮数"', () => {
+  // 场景：最后 4 个 turn 边界里，turn 5 只剩投影（工具调用之间的空轮），
+  // turn 6/7 是投影之外什么都没有的边界。保留 2 轮真实对话 = turn 3、4。
+  const events = []
+  let seq = 0
+  for (let turn = 1; turn <= 7; turn += 1) {
+    events.push({ type: 'turn/start', seq: seq++, data: { turn } })
+    if (turn <= 4) {
+      events.push({ type: 'user/message', seq: seq++, data: { content: [{ type: 'text', text: `第${turn}轮的问题` }] } })
+      events.push({ type: 'assistant/message', seq: seq++, data: { message: { content: [{ type: 'text', text: `第${turn}轮的回答` }] } } })
+    } else {
+      events.push(projectionEvent(seq++))
+    }
+    events.push({ type: 'turn/end', seq: seq++, data: { turn } })
+  }
+  const window = projectWorkingWindow(events, 2)
+  // 窗口是**连续后缀**：turn 5–7 虽然是空轮（只有投影），但它们比 turn 3–4 更近，
+  // 切在本轮边界之外会让 hotStartSeq/boundarySeq 自相矛盾。它们以 0 token 的代价
+  // 跟着进来，真正的判据是"窗口里有 2 轮真对话"，不是"窗口里只有 2 个 turn"。
+  assert.deepEqual(window.hot.map((s) => s.turn), [3, 4, 5, 6, 7], '窗口应向前补足到 2 轮真实对话')
+  assert.equal(window.dialogueTurns, 2)
+  assert.equal(window.evicted.length, 2, '只有 turn 1–2 溢出')
+  assert.equal(window.projections, 3, '补进来的空轮里那 3 条投影仍被记为"已排除"')
+  assert.equal(window.tokens, estimateTokens('第3轮的问题') + estimateTokens('第3轮的回答')
+    + estimateTokens('第4轮的问题') + estimateTokens('第4轮的回答'), '空轮不得给窗口加 token')
+
+  // 对照：按 turn 边界切（旧行为）时最后 2 个 turn 都是空轮，窗口里一个字的真对话都没有。
+  const spans = projectTurns(events)
+  assert.deepEqual(spans.slice(-2).map((s) => s.charCount), [0, 0], '前提：最后两个 turn 确实没有真对话')
+  assert.deepEqual(spans.slice(-2).map((s) => s.turn), [6, 7])
+  assert.ok(window.hot.reduce((n, s) => n + s.charCount, 0) > 0, '窗口里必须有真对话')
+})
+
+test('renderWorkingMemory：排除投影后如实报"最近 N 轮真实对话"与排除条数', () => {
+  const events = [
+    { type: 'turn/start', seq: 0, data: { turn: 1 } },
+    { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: '第一轮问题' }] } },
+    projectionEvent(2),
+    { type: 'turn/end', seq: 3, data: { turn: 1 } },
+    { type: 'turn/start', seq: 4, data: { turn: 2 } },
+    { type: 'user/message', seq: 5, data: { content: [{ type: 'text', text: '第二轮问题' }] } },
+    projectionEvent(6),
+    projectionEvent(7),
+    { type: 'turn/end', seq: 8, data: { turn: 2 } },
+  ]
+  const window = projectWorkingWindow(events, 2)
+  const marker = renderWorkingMemory(window, 'marker')
+  assert.ok(marker !== null, 'marker 形态必须有输出')
+  assert.match(marker, /最近 2 轮真实对话/)
+  // 剪枝后只留一行：投影条数、估算占用、"原文即上方"这三行都不再注入（零信息）。
+  assert.doesNotMatch(marker, /投影 \d+ 条已排除/, '变动的投影计数不该进注入')
+  assert.doesNotMatch(marker, /估算占用/, '估算占用会被误读成限额，已删')
+  assert.doesNotMatch(marker, /该窗口内的对话原文/, '"原文即上方"是同义反复，已删')
+  assert.ok(!marker.includes('999'), `不得把投影自身的估算数字带进 L1 块，实际：${marker}`)
+  // 可核对的事实仍然在：turn 区间与总轮数必须与窗口同源。
+  const first = window.hot[0]
+  const last = window.hot[window.hot.length - 1]
+  assert.match(marker, new RegExp(`turn ${first.turn}–${last.turn}`))
+  assert.match(marker, new RegExp(`共 ${window.totalTurns} 轮`))
+})
+
+// ── L1 窗口的"首条投影多算一个 turn"回归（真实 bug）──────────────────────
+//
+// 真实故障：`agent/pre-step` 跑的时候，本轮用户消息**还没被 append 进事件数组**
+// （顺序是 turn/start → step/start → 本钩子 → user/message）。于是本轮在
+// `projectTurns` 里是一个空轮，补足循环为了凑满 keep 个"有正文的轮"多往前拉一个
+// turn：实测真实会话 11 个 turn（98–104、108、109、111、112）的首条投影写成
+// `窗口内 9 个 turn（turn 90–98）`，同轮第二条（消息已落地）才修正成 8 个。
+
+/** 造 n 个"已结束且每轮都有正文"的轮，seq 从 0 开始。 */
+function completedTurns(turns, prefix = '轮') {
+  const events = []
+  let seq = 0
+  for (let turn = 1; turn <= turns; turn += 1) {
+    events.push({ type: 'turn/start', seq: seq++, data: { turn } })
+    events.push({ type: 'user/message', seq: seq++, data: { content: [{ type: 'text', text: `第${turn}${prefix}的问题` }] } })
+    events.push({ type: 'turn/end', seq: seq++, data: { turn } })
+  }
+  return { events, next: seq }
+}
+
+test('projectWorkingWindow：当前轮正文未落地时不得多拉一个 turn（首条投影错、次条对的根因）', () => {
+  const { events, next } = completedTurns(6)
+  // pre-step 时刻的真实形状：当前轮 7 只有 turn/start，用户消息还没写进 events。
+  const preStep = [...events, { type: 'turn/start', seq: next, data: { turn: 7 } }]
+  assert.equal(projectTurns(preStep).at(-1).charCount, 0, '前提：当前轮在事件数组里确实是空轮')
+
+  // 旧行为（不传 options）：把它当空轮，于是多往前拉一个 turn → 5 个 turn。
+  const before = projectWorkingWindow(preStep, 4)
+  assert.equal(before.hot.length, 5, '旧行为应复现"窗口内 5 个 turn"（4 个真实轮 + 多拉的一个）')
+  assert.deepEqual(before.hot.map((s) => s.turn), [3, 4, 5, 6, 7])
+  assert.equal(before.dialogueTurns, 4)
+
+  // 修复后：把当前轮（含载荷里的正文）传进去，窗口只装最近 4 个 turn。
+  const after = projectWorkingWindow(preStep, 4, { pendingTurn: 7, pendingText: '第7轮的问题' })
+  assert.equal(after.hot.length, 4, '修复后窗口应为 4 个 turn，而不是为了凑数多拉一个')
+  assert.deepEqual(after.hot.map((s) => s.turn), [4, 5, 6, 7])
+  assert.equal(after.dialogueTurns, 4, '窗口内仍有 4 轮真实对话——不能靠少算一个真实轮来修计数')
+  assert.equal(after.evicted.length, 3, '被移出的是真正的第 9/5 个轮（turn 3），它进入 L2')
+
+  // 当前轮的正文必须计入窗口体积，否则修复会变成"少装一轮"。
+  const expected = ['第4轮的问题', '第5轮的问题', '第6轮的问题', '第7轮的问题']
+    .reduce((n, text) => n + estimateTokens(text), 0)
+  assert.equal(after.tokens, expected, 'pending 轮的正文必须算进 tokens')
+  assert.equal(after.charCount, '第4轮的问题第5轮的问题第6轮的问题第7轮的问题'.length)
+  assert.equal(after.hot.reduce((n, s) => n + s.tokens, 0), after.tokens, 'hot 各轮之和仍须等于 window.tokens')
+})
+
+test('projectWorkingWindow：补上的当前轮若事件里已有正文，不重复计数', () => {
+  const { events, next } = completedTurns(2)
+  const withMessage = [
+    ...events,
+    { type: 'turn/start', seq: next, data: { turn: 3 } },
+    { type: 'user/message', seq: next + 1, data: { content: [{ type: 'text', text: '第三轮的问题' }] } },
+  ]
+  const plain = projectWorkingWindow(withMessage, 2)
+  const withPending = projectWorkingWindow(withMessage, 2, { pendingTurn: 3, pendingText: '第三轮的问题' })
+  assert.deepEqual(withPending.hot.map((s) => s.turn), plain.hot.map((s) => s.turn))
+  assert.equal(withPending.tokens, plain.tokens, '事件里已有正文时，pending 正文不得再算一遍')
+  assert.equal(withPending.charCount, plain.charCount)
+})
+
+test('projectWorkingWindow：修复后首条投影与同轮第二条逐字一致（模型看到的边界不再漂移）', () => {
+  const { events, next } = completedTurns(6)
+  const preStep = [...events, { type: 'turn/start', seq: next, data: { turn: 7 } }]
+  // 同一条轮，用户消息落地之后（第二条投影时刻）。
+  const afterMessage = [
+    ...preStep,
+    { type: 'user/message', seq: next + 1, data: { content: [{ type: 'text', text: '第7轮的问题' }] } },
+  ]
+  const first = renderWorkingMemory(
+    projectWorkingWindow(preStep, 4, { pendingTurn: 7, pendingText: '第7轮的问题' }),
+    'marker',
+  )
+  const second = renderWorkingMemory(projectWorkingWindow(afterMessage, 4), 'marker')
+  assert.equal(first, second, '首条投影必须与同轮第二条完全一致，包括"窗口内 N 个 turn"这一句')
+  assert.doesNotMatch(first, /窗口内 \d+ 个 turn/, '修复后首条不应再出现"窗口内 N 个 turn"的自我修正')
+  assert.match(first, /最近 4 轮真实对话（turn 4–7）/)
+})
+
+test('pendingWindowInput：从 pre-step 载荷取本轮用户输入，排除投影与非 user 角色', () => {
+  const projected = projectionEvent(9)
+  const options = pendingWindowInput({
+    turn: 8,
+    step: 1,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: '本轮真正的问题' }], source: { kind: 'user' } },
+      // 投影是注入物，不是对话：混进来会让"最近 N 轮真实对话"自报数。
+      { role: 'user', content: projected.data.content, source: { kind: 'dsh-tri-layer-memory' } },
+      { role: 'assistant', content: [{ type: 'text', text: '不算' }] },
+    ],
+  })
+  assert.deepEqual(options, { pendingTurn: 8, pendingText: '本轮真正的问题' })
+
+  // 没有轮号 / 没有用户输入 → 保持旧行为（传错轮号会凭空多算一轮）。
+  assert.equal(pendingWindowInput({ messages: [{ role: 'user', content: 'x' }] }), null)
+  assert.equal(pendingWindowInput({ turn: 8, messages: [] }), null)
+  assert.equal(pendingWindowInput({ turn: 8, messages: [{ role: 'user', content: [] }] }), null)
+  assert.equal(pendingWindowInput(null), null)
 })
 
 test('contentToText：文本块保留，图片与工具调用折叠为占位符', () => {
@@ -305,6 +539,34 @@ test('DeepMemoryStore：prune 会真正删记录并重写文件', async () => {
   }
 })
 
+test('DeepMemoryStore：maxTurnTo 从库里推出水位（重启后不再重蒸的依据）', async () => {
+  // 真实故障：水位只活在内存里，进程一重启就归零，于是同一轮被反复蒸馏。
+  // 修法是从库里推最大轮号——所以这个读数必须有测试，否则"水位持久化"没有观察面。
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-watermark-'))
+  try {
+    const store = new DeepMemoryStore(dir, 'jsonl')
+    await store.open()
+    assert.equal(store.maxTurnTo('s-1'), -1, '空库的初值必须是 -1（= 一轮都没蒸过）')
+    store.put({ kind: 'turn', sessionId: 's-1', turnFrom: 1, turnTo: 1, text: '第一轮' })
+    store.put({ kind: 'turn', sessionId: 's-1', turnFrom: 2, turnTo: 2, text: '第二轮' })
+    store.put({ kind: 'turn', sessionId: 's-1', turnFrom: 7, turnTo: 7, text: '第七轮' })
+    store.put({ kind: 'turn', sessionId: 's-2', turnFrom: 9, turnTo: 9, text: '别的会话第九轮' })
+    store.put({ kind: 'digest', sessionId: 's-1', turnFrom: 1, turnTo: 8, text: '摘要' })
+    assert.equal(store.maxTurnTo('s-1'), 7, '只看本会话的 turn 记录（digest 的 turnTo=8 不算）')
+    assert.equal(store.maxTurnTo('s-2'), 9, '别的会话各算各的')
+    assert.equal(store.maxTurnTo('s-1', 'digest'), 8, '类别可选，便于核对')
+    store.close()
+
+    // 重新打开（= 进程重启）后读数不变：这是"能从库推出水位"的全部意义。
+    const reopened = new DeepMemoryStore(dir, 'jsonl')
+    await reopened.open()
+    assert.equal(reopened.maxTurnTo('s-1'), 7, '重启后仍能推出同一水位')
+    reopened.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // ── L2 短期记忆（纯渲染部分）─────────────────────────────────────────────
 
 test('extractiveDigest：保留用户诉求首行与工具清单，0 模型调用', () => {
@@ -325,15 +587,21 @@ test('renderTurnsForSummary：逐轮截断，超长正文不会整体灌进摘�
   assert.doesNotMatch(text, /x{50}/)
 })
 
-test('renderShortTermMemory：无摘要时说明等待中；有摘要时给出覆盖区间与压缩比', () => {
+test('renderShortTermMemory：只报覆盖区间与欠账轮数（生成方式/压缩比/0 欠账已删）', () => {
   assert.match(renderShortTermMemory(null, 5), /尚无摘要.*5 轮/s)
+  // "已有 0 轮溢出"是恒定的"一切正常"，对模型没有行动价值，不该占一行。
+  assert.doesNotMatch(renderShortTermMemory(null, 0), /0 轮/)
   const text = renderShortTermMemory({
     text: '## 任务主线\n- 建插件', via: 'extractive',
     turnFrom: 1, turnTo: 6, tokens: 10, sourceTokens: 100, createdAt: Date.now(),
   }, 0)
   assert.match(text, /覆盖 turn 1–6/)
-  assert.match(text, /extractive/)
-  assert.match(text, /10x/)
+  assert.doesNotMatch(text, /extractive|压缩比|10x/, '摘要的生成方式与压缩比是给人看的元信息，不进注入')
+  assert.doesNotMatch(text, /待摘要的溢出轮：0/)
+  // 真有欠账时才报——那是"有一段内容不在任何摘要里"的唯一提示。
+  assert.match(renderShortTermMemory({
+    text: '摘要', via: 'llm', turnFrom: 1, turnTo: 6, tokens: 10, sourceTokens: 100, createdAt: Date.now(),
+  }, 2), /待摘要的溢出轮：2/)
 })
 
 test('resolveTarget：优先会话最近路由，退到 agent options，都没有则 undefined', () => {

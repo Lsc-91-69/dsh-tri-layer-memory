@@ -168,8 +168,15 @@ test('骨架不受 injectionBudgetTokens 影响：预算压到下限也逐字不
     // 预算收紧必须真的发生了（否则这条测试什么都没证明）。
     assert.ok(estimateTokens(tight.text) < estimateTokens(loose.text),
       `预算 200 的投影应小于预算 8000 的投影：${estimateTokens(tight.text)} vs ${estimateTokens(loose.text)}`)
-    assert.ok(!tight.text.includes('## L3 深层记忆') || tight.text.includes('被截断'),
-      '预算 200 应触发 L1/L2/L3 的降级')
+    // 预算 200 时 L3 索引**不再整块消失**：完整索引只有约 40–50 tok，通常原样保留；
+    // 更紧的预算才降级成一行（见 budget-floor.test.mjs）。
+    const tightL3 = blockOf(tight.text, '## L3 深层记忆')
+    assert.ok(tightL3.length > 0, '预算 200 时 L3 索引仍必须有一行保底')
+    assert.match(tightL3, /memory_recall/, '索引必须让模型知道用哪个工具去查')
+    assert.match(tightL3, /\d+ 条/, '索引必须带计数')
+    // 预算收紧必须真的可见：要么 L3 是一行形态，要么 L2 被截断。
+    assert.ok(!tightL3.includes('已持久化') || tight.text.includes('截断'),
+      `预算 200 应触发 L3 降级或 L2 截断，实际 L3：${tightL3}`)
 
     // 骨架逐字相同，且一条不少——它走的是自己的独立上限。
     assert.equal(tightSkeleton, looseSkeleton, '骨架不应随注入预算变化')

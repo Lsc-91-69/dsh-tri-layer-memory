@@ -200,7 +200,8 @@ test('撞 max-tokens 且正文非空：用截断后的正文，via 仍是 llm，
   assert.equal(status.layers.L2.failure, null, '截断保留不是失败，失败原因必须为 null')
   // 但必须能看出"被截过"。
   assert.equal(status.layers.L2.truncated, true, 'truncated 必须为 true：这是与"完全失败"的唯一分界')
-  assert.match(injected, /生成方式 llm/, '注入的必须是 llm 摘要')
+  // 生成方式是给人看的观察面（status.layers.L2.via 已断言），不再进注入。
+  assert.doesNotMatch(injected, /生成方式/, '生成方式/压缩比已从注入里删掉')
   assert.match(injected, /决定按行边界裁剪/, '保留的正文必须进注入')
   assert.doesNotMatch(injected, /还需要确认真实网关下的 reasoningEffort/, '半句话不得进注入')
 })
@@ -274,7 +275,7 @@ test('撞 max-tokens 且正文为空：这才退回 extractive，并记下"0 字
   assert.equal(status.layers.L2.attempt.finish, 'max-tokens')
   assert.equal(status.layers.L2.attempt.outputChars, 0, '正文 0 字符是"推理吃光预算"的判据')
   assert.equal(status.layers.L2.attempt.salvaged, false)
-  assert.match(injected, /生成方式 extractive/)
+  assert.doesNotMatch(injected, /生成方式/, '生成方式已不进注入；观察面是 status.layers.L2.via')
 })
 
 // ── 3. 正常完成：行为不变 ─────────────────────────────────────────────────

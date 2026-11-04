@@ -22,14 +22,15 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULTS, MEMORY_NAMESPACE, defaultStorageDir, resolveConfig } from './config-core.ts'
 import type { TriLayerConfig } from './config-core.ts'
-import { contentToText, estimateTokens, messageBody, projectWorkingWindow, renderWorkingMemory } from './l1-working.ts'
-import type { EventLike, TurnSpan } from './l1-working.ts'
+import { PROJECTION_HEADER, collectToolResults, contentToText, estimateTokens, messageBody, pendingWindowInput, projectWorkingWindow, renderWorkingMemory } from './l1-working.ts'
+import type { EventLike, ToolResultHit, TurnSpan } from './l1-working.ts'
 import { L2_TRUNCATION_NOTE, arbitrateInjection, fitMainline } from './budget.ts'
 import type { Arbitration, InjectionBlock } from './budget.ts'
 import { buildDigest, callWithEffortRetry, extractiveDigest, renderShortTermMemory, resolveTarget } from './l2-short.ts'
 import type { DigestAttempt, DigestFailure, DigestResult, LlmSeam } from './l2-short.ts'
 import { DeepMemoryStore, extractKeywords } from './l3-deep.ts'
 import type { MemoryRecord, PruneOutcome } from './l3-deep.ts'
+import { captureToolRecord } from './tool-digest.ts'
 import {
   CAUSE_INSTRUCTION,
   applyCauses,
@@ -42,7 +43,7 @@ import {
   renderCauseRequest,
 } from './milestones.ts'
 import type { Milestone } from './milestones.ts'
-import { buildRecallTool, buildStateTool, buildVerifyTool } from './recall.ts'
+import { buildDedupeTool, buildRecallTool, buildStateTool, buildVerifyTool } from './recall.ts'
 import type { MemoryRuntime } from './recall.ts'
 import { engineOf, resolveRecallToolName } from './integration.ts'
 import { PROJECTION_KEY, createTriLayerProjection } from './projection.ts'
@@ -105,6 +106,13 @@ async function loadSettingsSchema(): Promise<unknown | null> {
       l3MaxRecords: num(DEFAULTS.l3MaxRecords),
       l3PruneMinScore: num(DEFAULTS.l3PruneMinScore),
       l3InjectIndex: bool(DEFAULTS.l3InjectIndex),
+      // 工具细节池的四个键也必须在 schema 里：设置服务在场时它接管配置来源，
+      // 缺席的键会被 resolveConfig 当成"没配过"而回落默认——那样用户在组合行里
+      // 关掉工具落库、面板一保存就被静默改回开启，是同一族故障的又一次。
+      l3ToolDistill: bool(DEFAULTS.l3ToolDistill),
+      l3ToolRecordChars: num(DEFAULTS.l3ToolRecordChars),
+      l3ToolMaxPerSession: num(DEFAULTS.l3ToolMaxPerSession),
+      l3ToolMaxRecords: num(DEFAULTS.l3ToolMaxRecords),
       // 主线骨架的键也必须在 schema 里：设置服务在场时它接管配置来源，
       // 缺席的键会被 resolveConfig 当成"没配过"而回落到默认值——那样面板一保存，
       // 用户在组合行里配的骨架上限就被静默改回默认。
@@ -151,18 +159,78 @@ const POLICY_SECTION = [
   '  调用 recall 工具按关键词或 id 取回。不要凭印象编造被遗忘的内容——先查。',
 ].join('\n')
 
+/**
+ * 一次注入的**实际** token 记账（诊断用；刻意不进投影状态）。
+ *
+ * **为什么必须有它**：诊断文件过去只记"摘要调用花了多少"（`l2.attempt`）和
+ * "骨架有几条"，却从不记"这一轮到底往上下文里塞了多少 token"。于是
+ * "三层记忆压缩了 82 倍"这种话无法自证——那个 82 倍其实只是 **L2 摘要自己的
+ * 输入/输出比**（见 l2-render 的 `renderShortTermMemory`），不是系统级压缩比；
+ * 而系统级的分子（原始会话）与分母（实际注入）此前都没有落盘的读数。
+ * 这是同一族缺陷的第七次：**读数看起来有，缺的正好是关键的加数**。
+ *
+ * 口径（全部用 {@link estimateTokens}，不引入第二套估算）：
+ * - 四项都取**仲裁/裁剪之后、实际进投影的文本**（L2/L3 被截断的，按截断后的文本算）；
+ * - `mainlineTokens` 取 `fitMainline` 的渲染后读数——骨架不进仲裁，但确实注入；
+ *   漏掉它会让注入合计偏小、压缩比虚高，而它恰是"主内容不遗忘"的载体；
+ * - `totalInjected` 是四项之和，**不含**投影消息头（`# 三层记忆 · 本轮投影`）与
+ *   块间空行（两者合计实测 9–10 tokens，脚本里作为 messageTokens − totalInjected 单独报出）。
+ *   刻意保持可加性：只有自洽的加法，才能让
+ *   "四项之和 = 合计"成为一条会把"漏算一层"变成测试失败的断言，而不是一个
+ *   看起来合理的数字。
+ */
+interface InjectionAccounting {
+  /** L1 注入块（marker 形态下只是窗口边界声明，不等于 L1 原文窗口的体量）。 */
+  l1Tokens: number
+  /** L2 摘要块（含块头；被预算截断时按截断后文本算）。 */
+  l2Tokens: number
+  /** L3 索引块（含块头；被丢弃时为 0）。 */
+  l3Tokens: number
+  /** 主线骨架块（`fitMainline` 裁剪后的渲染文本，含块头与任务标题行）。 */
+  mainlineTokens: number
+  /** 四项之和（见上方说明：不含消息头与空行）。 */
+  totalInjected: number
+  /** 本次仲裁使用的预算（只约束 L1/L2/L3；骨架另有独立上限）。 */
+  budgetTokens: number
+  /** 因预算被**整块丢弃**的块 id（截断但仍在用的不算）。 */
+  dropped: string[]
+  /**
+   * 本次注入发生的时刻（ISO）。
+   *
+   * 存在的理由：诊断文件每轮 pre-step 都会落盘一次（它要记 L2/骨架的失败原因），
+   * 而注入本身可能因"内容没变"被跳过。没有这个时间戳，读者会把上一轮的注入数字
+   * 当成这一轮的——比缺字段更糟。
+   */
+  at: string
+}
+
 /** 单个会话的记忆状态（WeakMap 键，随会话回收）。 */
 interface SessionState {
   /** 当前 L2 摘要。 */
   digest: DigestResult | null
   /** 上次生成摘要的时间。 */
   lastDigestAt: number
-  /** 已蒸馏进 L3 的最高轮号（防止重复落库）。 */
+  /**
+   * 已蒸馏进 L3 的最高轮号（**进程内**水位，不是权威值）。
+   *
+   * 进程重启会丢掉它，所以它必须能从 L3 库重新推断：见
+   * {@link SessionState.l3WatermarkSeeded} 与 refreshDigest 里的播种逻辑。
+   * 只靠内存时实测同一轮被重复蒸馏 32 次（turn 1 有 32 份副本）。
+   */
   l3HighWaterTurn: number
+  /**
+   * 本会话的水位是否已按 L3 库内容播种过。
+   *
+   * 为什么不直接判断 `l3HighWaterTurn === -1`：库里没有任何 turn 记录时（新会话）
+   * 最大轮号正好就是 -1，两个状态无法区分，于是每一轮都会白扫一遍全库。
+   */
+  l3WatermarkSeeded: boolean
   /** 上次注入的投影文本（内容不变则不重复注入，省 token）。 */
   lastInjected: string | null
   /** 上次注入预算仲裁的结果（memory_state / memory_verify 报告用）。 */
   lastArbitration: Arbitration | null
+  /** 上次**真正注入**的 token 记账；null = 本会话还没注入过。 */
+  injection: InjectionAccounting | null
   /** 上次提取主线骨架时的 L1 溢出轮数；-1 表示本会话还没提取过。 */
   mainlineWaterMark: number
   /** 上次提取出的里程碑（溢出轮数不变时直接复用，避免每步重跑全量提取）。 */
@@ -412,33 +480,77 @@ interface HostContext {
 }
 
 /**
- * 渲染 L3 索引块（只报规模与主题，不注入正文）。
+ * 渲染 L3 索引块（只报规模，不注入正文）。
  *
- * @param stats - L3 库的统计。
- * @param keywords - 当前任务链关键词。
+ * **工具记录只报条数，绝不报正文或主题**：工具细节池可能有几十条、每条几千字符，
+ * 一旦进索引，每轮注入立刻按数量级膨胀。计数行是"可 recall"的提示，不是内容。
+ *
+ * 2026-11 剪枝：去掉了「近期主题」行（CJK 二元组碎片，召回路径不读它，见下方
+ * 注释）、`约 N tokens` 与后端名。`keywords` 参数仍保留——它是调用方的既有契约，
+ * 而且剪枝后本函数不再消费它；保留形状是为了让"删掉的那一行"只删渲染、不删数据。
+ *
+ * @param stats - L3 库的统计（含工具池条数）。
+ * @param keywords - 当前任务链关键词（**已不参与渲染**，保留签名）。
  * @param recallName - 本插件 recall 工具的实际名字。
  * @param vaultNote - 另一个记忆库在场时的指引（无则为空串）。
  * @returns 注入文本。
  */
-function renderDeepIndex(
-  stats: { count: number; tokens: number; backend: string | null },
+export function renderDeepIndex(
+  stats: { count: number; tokens: number; backend: string | null; tools?: number; toolTokens?: number },
   keywords: readonly string[],
   recallName: string,
   vaultNote: string,
 ): string {
+  void keywords
   const lines = ['## L3 深层记忆（Deep Memory）']
-  if (stats.count === 0) {
+  const tools = stats.tools ?? 0
+  // 主内容口径单独报：工具池是独立预算，把它加进"已持久化 N 条"会让主内容的规模
+  // 读数随工具输出漂移，读者再也无法用这个数字判断"故事线有多大"。
+  const mainCount = Math.max(0, stats.count - tools)
+  if (mainCount === 0 && tools === 0) {
     lines.push(`- 库为空（后端 ${stats.backend ?? '未打开'}）。更早的内容尚未被蒸馏。`)
   } else {
-    const topics = keywords.slice(0, 10).join(', ') || '(未提取到主题)'
-    lines.push(
-      `- 已持久化 ${stats.count} 条记录 / 约 ${stats.tokens} tokens（后端 ${stats.backend ?? '未打开'}），**正文不在此处**。`,
-      `- 近期主题：${topics}`,
-    )
+    // 只报条数与"正文不在这里"。以下四项被删掉的理由（每一条都按"模型拿它做什么"
+    // 检验过，答案都是"什么也不做"）：
+    // - `近期主题`：由 CJK 二元组碎片拼成（实测出现 `user/message`、`seq`、`104`
+    //   这种不像主题词的碎片）。召回路径**从不读它**——`memory_recall` 的输入只有
+    //   query/id（见 recall.ts），关键词打分只读 L3 记录正文与记录自带 keywords。
+    //   它唯一的读者是"模型看到这些词后自己改写 query"，而这一步没有任何实测证据。
+    // - `约 N tokens`：模型不能据此做任何动作（不能删、不能扩容），却会让读者把它
+    //   当成预算/限额。
+    // - `（后端 sqlite）`：诊断信息，人在 memory_state 里能看到；对模型零行动价值。
+    // - 工具池的 `约 N tokens`：同上，保留条数与"非结论"提醒即可。
+    lines.push(`- 已持久化 ${mainCount} 条记录，**正文不在此处**。`)
+    if (tools > 0) {
+      // 只给计数与一句"它不是结论"。内容一律不进注入——这是硬约束。
+      lines.push(`- 另有工具原始输出 ${tools} 条（可 recall，均为原始输出、非结论）。`)
+    }
   }
   lines.push(`- 需要细节时调用 \`${recallName}\`（关键词或 id）取回。`)
   if (vaultNote.length > 0) lines.push(vaultNote)
   return lines.join('\n')
+}
+
+/**
+ * L3 索引的**保底形态**：一行计数 + recall 入口。
+ *
+ * **为什么必须保留这一行**：索引是"模型知道还有东西可以查"的唯一入口。它只有
+ * 约 30 tokens，却决定了模型会不会去 recall；整块消失时，模型连"库里有 434 条"
+ * 都不知道，表现就是"它不知道自己可以查"（实测 `dropped: ["l3"]`、`l3Tokens: 0`）。
+ * 所以预算再紧也只允许它降级成这一行，不允许归零（降级由 budget.ts 的
+ * `pinned/floorText` 保证；只有连一行都放不下时才会消失）。
+ *
+ * 与 {@link renderDeepIndex} 的分工：那个是完整索引（主内容条数 + 工具池条数 +
+ * recall 用法 + vault 指引），这个是它的最小子集，**仍然带计数与工具名**——没有
+ * 计数的"可以去查"和没有索引一样不可行动。
+ *
+ * @param count - L3 库里可 recall 的记录总数（含工具记录）。
+ * @param recallName - 本插件 recall 工具的实际名字。
+ * @returns 一行形态的索引。
+ */
+export function renderDeepIndexFloor(count: number, recallName: string): string {
+  return '## L3 深层记忆（Deep Memory）\n'
+    + `- 另有 ${count} 条记录可 recall（\`${recallName}\`，关键词或 id）。`
 }
 
 /**
@@ -638,7 +750,9 @@ function feedProjection(input: {
   let records: readonly MemoryRecord[] = []
   try {
     stats = store.stats()
-    records = store.all()
+    // 工具记录**不进思维栏**：面板是给人看的，几十条几千字符的原始输出会把主线
+    // 骨架与 turn 记录淹掉。计数仍按整库报（stats.count 含工具），记录列表不含。
+    records = store.all().filter((record) => record.kind !== 'tool')
   } catch {
     // 读不到库只是 L3 段显示为空；L1/L2/骨架照常发布。
   }
@@ -975,6 +1089,9 @@ export function apply(ctx: unknown, config: unknown = {}): void {
           // 两者的修法完全不同——没有这一段就只能靠猜。
           causeAttempt: state.causeAttempt,
         },
+        // 这一轮**实际注入**的 token 记账。此前只有"调用花多少 / 骨架几条"，
+        // 没有"灌进上下文多少"——压缩比因此无法自证（见 InjectionAccounting）。
+        injection: state.injection,
       }
       const text = JSON.stringify(snapshot, null, 2) + '\n'
       if (text === lastDiagnostics) return
@@ -993,6 +1110,9 @@ export function apply(ctx: unknown, config: unknown = {}): void {
   const dir = defaultStorageDir(settings.l3Dir)
   const store = new DeepMemoryStore(dir, settings.l3Store)
   let storeReady = false
+  // 打开失败要留痕：memory_dedupe 在"还没打开"与"打开失败"两种情况下必须给不同的话，
+  // 否则模型会一直重试一个永远不会就绪的后端（又是"看起来在工作"）。
+  let storeError: string | null = null
   if (settings.l3Enabled) {
     void store.open()
       .then((kind) => {
@@ -1003,8 +1123,8 @@ export function apply(ctx: unknown, config: unknown = {}): void {
         context.logger.info('[dsh-tri-layer-memory] L3 后端就绪：%s，%d 条记录（%s）', kind, store.size, dir)
       })
       .catch((error: unknown) => {
-        context.logger.warn('[dsh-tri-layer-memory] L3 后端打开失败（记忆层降级为 L1+L2）：%s',
-          error instanceof Error ? error.message : String(error))
+        storeError = error instanceof Error ? error.message : String(error)
+        context.logger.warn('[dsh-tri-layer-memory] L3 后端打开失败（记忆层降级为 L1+L2）：%s', storeError)
       })
   }
 
@@ -1017,8 +1137,10 @@ export function apply(ctx: unknown, config: unknown = {}): void {
         digest: null,
         lastDigestAt: 0,
         l3HighWaterTurn: -1,
+        l3WatermarkSeeded: false,
         lastInjected: null,
         lastArbitration: null,
+        injection: null,
         mainlineWaterMark: -1,
         mainline: [],
         mainlineCauses: new Map(),
@@ -1071,6 +1193,9 @@ export function apply(ctx: unknown, config: unknown = {}): void {
         sessionCount += 1
         sessionTokens += record.tokens
       }
+      // 重复读数：只在 memory_state / memory_verify 这类低频调用里扫（O(n) 一次，
+      // 不排序）。不要挪进 store.stats()——那个每轮投影都会调用一次。
+      const duplicates = store.duplicateSummary()
       return {
         l1: {
           retainTurns: settings.l1RetainTurns,
@@ -1111,16 +1236,31 @@ export function apply(ctx: unknown, config: unknown = {}): void {
           // 口径，比在注释里解释更可靠——memory_state 是给模型看的。
           libraryCount: stats.count,
           libraryTokens: stats.tokens,
+          // 工具细节池单独报：它不进 `l3MaxRecords`，混在整库里读会让"主内容多大"
+          // 这个数字随工具输出漂移。memory_state 要能分别回答两个问题。
+          toolCount: stats.tools,
+          toolTokens: stats.toolTokens,
           sessionCount,
           sessionTokens,
           dir,
+          // 「库里有垃圾」唯一的观察面：组数 + 可删条数（+ 正文不一致的组数）。
+          duplicateGroups: duplicates.groups,
+          duplicateRecords: duplicates.records,
+          duplicateDifferingGroups: duplicates.differingGroups,
         },
         injection: {
           budgetTokens: settings.injectionBudgetTokens,
+          // `usedTokens` 只覆盖**仲裁层**（L1/L2/L3）；骨架不进仲裁（见 budget.ts 的
+          // fitMainline），但它确实注入。只报前者会让"本轮投影用了多少"偏小，而读数
+          // 偏小的代价和缺字段一样：压缩比会虚高。所以把两个口径都给出来。
           usedTokens: state.lastArbitration?.tokens ?? 0,
           requestedTokens: state.lastArbitration?.requestedTokens ?? 0,
           dropped: state.lastArbitration?.dropped ?? [],
           truncated: state.lastArbitration?.truncated ?? [],
+          /** 含骨架的实际注入合计（与诊断文件的 injection.totalInjected 同源）。 */
+          totalInjected: state.injection?.totalInjected ?? 0,
+          /** 骨架块的渲染后 token（独立于仲裁预算）。 */
+          mainlineTokens: state.injection?.mainlineTokens ?? 0,
         },
         recallTool,
         // 骨架 cause 回填的失败原因。放在这里（而不是塞进 L2 段）是因为它属于
@@ -1139,7 +1279,24 @@ export function apply(ctx: unknown, config: unknown = {}): void {
     },
     prune: (session): PruneOutcome => {
       const window = projectWorkingWindow(readEvents(session), settings.l1RetainTurns)
-      return store.prune(taskKeywords(window), settings.l3PruneMinScore, settings.l3MaxRecords)
+      return store.prune(taskKeywords(window), settings.l3PruneMinScore, settings.l3MaxRecords, Date.now(), {
+        // 工具池**独立**于 l3MaxRecords：主内容池的上限与剪枝结果不因工具记录而改变。
+        maxRecords: settings.l3ToolMaxRecords,
+        maxPerSession: settings.l3ToolMaxPerSession,
+      })
+    },
+    dedupe: (input) => {
+      // 宁可明确报错，也不要返回"removed: 0"——那会被读成"库是干净的"。
+      if (!settings.l3Enabled) {
+        throw new Error('L3 已关闭（l3.enabled=false），没有可去重的库；本次未改动任何文件。')
+      }
+      if (store.backendKind === null) {
+        throw new Error(storeError === null
+          ? 'L3 后端仍在打开中（store 尚未就绪），本次未改动任何文件；请稍后重试。'
+          : `L3 后端打开失败：${storeError}；本次未改动任何文件。`)
+      }
+      // 唯一写入者就是这里：改 store 的内存快照，再由 store 自己的后端 replace 落盘。
+      return store.dedupe(input)
     },
     expectedEngine: () => settings.integrationEngine,
     lastProjection: (session) => stateOf(session).lastInjected,
@@ -1193,7 +1350,8 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       let records: readonly MemoryRecord[] = []
       try {
         stats = store.stats()
-        records = store.all()
+        // 与 feedProjection 同口径：工具记录是 recall 专用细节，不进思维栏。
+        records = store.all().filter((record) => record.kind !== 'tool')
       } catch {
         // 读不到库只是 L3 段为空，L1/骨架照常发布。
       }
@@ -1409,8 +1567,16 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       captureSession(session)
       ensureRegistered('get')
       const state = stateOf(session)
-      const window = projectWorkingWindow(readEvents(session), settings.l1RetainTurns)
-
+      // 本轮用户消息要到本钩子**返回之后**才被 append 进事件数组（顺序是
+      // turn/start → step/start → 本钩子 → user/message）。不把载荷里的本轮输入
+      // 传进窗口，补足循环就会把当前空轮当成缺口、多往前拉一个 turn：实测 11 个
+      // turn 的首条投影写成"窗口内 9 个 turn"，同轮第二条才自我修正成 8 个——
+      // 而首条才是注入给模型的那条。传进去后首条与第二条读数一致。
+      const window = projectWorkingWindow(
+        readEvents(session),
+        settings.l1RetainTurns,
+        pendingWindowInput(payload) ?? undefined,
+      )
       // seam 只解析一次、本轮共用：L2 摘要与 cause 回填走的是同一条通路，
       // 两处各自解析只会让"一条通、另一条不通"这种偏差更难发现。
       const seam = llmSeam()
@@ -1446,8 +1612,10 @@ export function apply(ctx: unknown, config: unknown = {}): void {
 
       // 任务标题在第 1 轮就已经写在日志里，不该等骨架提取跑过才有值（见 taskTitleOf）。
       const taskTitle = taskTitleOf(session, state)
-      // 诊断落盘放在这里：L2 / 骨架 / cause 三条路都已跑完，原因字段都已确定。
+      // 第一次诊断落盘：L2 / 骨架 / cause 三条路都已跑完，原因字段都已确定。
       // 刻意在注入逻辑之前——注入可能因"内容没变"提前返回，而诊断不该被一起跳过。
+      // 注入读数（injection）此刻还没有，由注入之后的那次补写（见下方 writeDiagnostics），
+      // 于是这个文件同时满足两件事：失败原因不因注入异常而丢，注入数字又能落盘。
       writeDiagnostics(state, sessionIdOf(session))
       // 思维栏：把刚刷新的三层读数喂给投影。刻意放在注入逻辑之前——注入可能因为
       // "内容没变"提前返回，而思维栏是给人看的检查面，不该跟着注入一起被跳过。
@@ -1477,11 +1645,17 @@ export function apply(ctx: unknown, config: unknown = {}): void {
         })
       }
       if (settings.l3InjectIndex && settings.l3Enabled) {
+        // L3 索引有**保底**：完整形态放不下时退到一行（见 budget.ts 的 pinned/floorText）。
+        // 只有库里有记录时才 pin：空库的索引对模型没有行动价值，不值得占保底额度。
+        const l3Stats = store.stats()
         candidates.push({
           id: 'l3',
-          text: renderDeepIndex(store.stats(), taskKeywords(window), recallTool.name, vaultNote(context)),
+          text: renderDeepIndex(l3Stats, taskKeywords(window), recallTool.name, vaultNote(context)),
           priority: 2,
           truncatable: true,
+          ...(l3Stats.count > 0
+            ? { pinned: true, floorText: renderDeepIndexFloor(l3Stats.count, recallTool.name) }
+            : {}),
         })
       }
 
@@ -1502,10 +1676,48 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       }
       if (blocks.length === 0) return decision
 
-      const text = `# 三层记忆 · 本轮投影\n\n${blocks.join('\n\n')}`
+      // 头部行与 l1-working 的识别判据**共用同一个常量**：写两份字面量时，改一处
+      // 忘了另一处，识别就会静默失效——投影会被重新算进 L1 窗口，而所有读数看起来正常。
+      const text = `${PROJECTION_HEADER}\n\n${blocks.join('\n\n')}`
       // 内容未变则不重复注入：省 token，也避免同一份投影在 surface 里堆积。
       if (text === state.lastInjected) return decision
       state.lastInjected = text
+
+      // ── 注入量记账（必须放在仲裁与 fitMainline **之后**）────────────────
+      // 量的是"实际进投影的文本"：L2/L3 若被预算截断，按截断后的文本算；骨架若被
+      // fitMainline 裁掉最旧的几条，按裁剪后的渲染文本算。若在仲裁之前量，得到的
+      // 就是"打算注入多少"——那正是这次要修的那类看起来合理的假读数。
+      const blockTokens = (id: 'l1' | 'l2' | 'l3'): number => {
+        const kept = arbitration.kept.find((block) => block.id === id)
+        return kept === undefined ? 0 : estimateTokens(kept.text)
+      }
+      const accounting: InjectionAccounting = {
+        l1Tokens: blockTokens('l1'),
+        l2Tokens: blockTokens('l2'),
+        l3Tokens: blockTokens('l3'),
+        // 骨架走独立上限、不进仲裁，但确实是注入的一部分。`fitMainline.tokens`
+        // 已是渲染后实测值，直接用它，避免在这里第二次估算出第二种口径。
+        mainlineTokens: mainline === null ? 0 : mainline.tokens,
+        // 先占位再算合计：让"四项之和 = 合计"在下一行就成立，读代码的人不必去别处找。
+        totalInjected: 0,
+        budgetTokens: arbitration.budgetTokens,
+        // 整块丢弃的才是 dropped；被截断但仍在用的不算（它的 token 已算进上面四项）。
+        dropped: [...arbitration.dropped],
+        at: new Date().toISOString(),
+      }
+      accounting.totalInjected = accounting.l1Tokens + accounting.l2Tokens
+        + accounting.l3Tokens + accounting.mainlineTokens
+      state.injection = accounting
+
+      // 诊断**再写一次**：第一次写在本轮注入逻辑之前（见上方注释），那时注入读数
+      // 还不存在。这里补写，让落盘快照带上刚刚实测的 injection 块。
+      //
+      // 为什么不是"把第一次的调用挪到这里"：注入块的构造/仲裁/渲染任何一处抛错，
+      // 外层 try/catch 都会直接 return，后面所有步骤都会被跳过——包括诊断落盘。
+      // 那会把这一轮的 "L2 为什么失败 / 骨架 cause 为什么没回填" 一起丢掉。
+      // 两次写各保住一半事实：第一次保失败原因，第二次补注入读数。代价只是一次
+      // 几 KB 的同步写（每轮最多两次），比丢掉任一半都便宜。
+      writeDiagnostics(state, sessionIdOf(session))
 
       return {
         ...decision,
@@ -1530,6 +1742,7 @@ export function apply(ctx: unknown, config: unknown = {}): void {
     toolCtx.effect(() => toolCtx.tools.register(buildRecallTool(runtime)))
     toolCtx.effect(() => toolCtx.tools.register(buildStateTool(runtime)))
     toolCtx.effect(() => toolCtx.tools.register(buildVerifyTool(runtime)))
+    toolCtx.effect(() => toolCtx.tools.register(buildDedupeTool(runtime)))
   })
 
   // ── 8. boot 自检 ─────────────────────────────────────────────────────
@@ -1589,14 +1802,91 @@ async function refreshDigest(input: {
   // 超出 L2 保留窗口的最旧部分 → L3。
   const overflowCount = Math.max(0, evicted.length - settings.l2RetainTurns)
   if (settings.l3Enabled && settings.l3Distill && storeReady && overflowCount > 0) {
-    for (const span of evicted.slice(0, overflowCount)) {
+    // 水位**播种**：从 L3 库里推本会话已蒸馏到的最大轮号，只在第一次用到时做一次。
+    //
+    // 为什么必须播种（而不是继续只靠内存字段）：`l3HighWaterTurn` 的初值是 -1，
+    // 进程一重启就归零，于是"已经从 turn 1 蒸到 turn 95"这件事被忘掉，下一轮又从
+    // turn 1 重蒸一遍。记录 id 由 createdAt + seq 生成，每重启一次就多一份副本——
+    // 实测某会话 1188 条里 1044 条是重复，turn 1 有 32 份。
+    //
+    // 为什么选择"从库推"而不是单独落一个水位文件（两个方案二选一）：
+    // - 不引入新的持久化状态，没有第二份真相，也就没有"水位文件和库不一致"这种故障；
+    // - 能自愈：库里有独白就跳过，迁移/回滚/换机器都零成本；
+    // - 库里的重复副本不影响结果——取的是最大轮号，不是条数。
+    // 代价是每次进程启动多一次全库扫描（1480 条约 1ms），且它假设"最大轮号之前的
+    // 轮都已处理过"——蒸馏本来就是按轮号升序推进的，这个假设与实现一致。
+    //
+    // 存量垃圾（重启期间已经写进去的副本：本会话实测 1044 条 / 整库 1130 条）**不在这里清**：
+    // 那是用户数据，只由显式命令 scripts/dedupe-l3.mjs 处理（默认 dry-run，--apply 才删）。
+    if (!state.l3WatermarkSeeded) {
+      state.l3WatermarkSeeded = true
+      const persisted = store.maxTurnTo(sessionId)
+      if (persisted > state.l3HighWaterTurn) state.l3HighWaterTurn = persisted
+    }
+    // ── 工具细节池：与 turn 记录**独立**推进 ──────────────────────────────
+    // 为什么水位不用 `l3HighWaterTurn`：那个水位在升级前就已经推到很后面（老会话的
+    // turn 记录早写完了）。如果工具记录也受它约束，这次升级对"已经溢出的历史轮次"
+    // 永远不生效——而漏掉的恰恰是最需要取回的那段。这里按"该轮有没有 tool 记录"
+    // 判断，幂等由 captureToolRecord 保证。
+    const overflowSpans = evicted.slice(0, overflowCount)
+    const toolEnabled = settings.l3ToolDistill && settings.l3Enabled && storeReady
+    if (toolEnabled && overflowSpans.length > 0) {
+      const existingTurns = new Set<number>()
+      for (const record of store.all()) {
+        if (record.kind === 'tool' && record.sessionId === sessionId) existingTurns.add(record.turnFrom)
+      }
+      // 每会话上限先挡一道：满了就不必再读事件、切正文（长会话里这是主要开销）。
+      const needCopy = existingTurns.size < settings.l3ToolMaxPerSession
+      const wanted = new Set<number>()
+      for (const span of overflowSpans) {
+        if (existingTurns.has(span.turn)) continue
+        if (wanted.size + existingTurns.size >= settings.l3ToolMaxPerSession) break
+        wanted.add(span.turn)
+      }
+      const hitsByTurn = new Map<number, ToolResultHit[]>()
+      if (needCopy && wanted.size > 0) {
+        for (const hit of collectToolResults(readEvents(session), (turn) => wanted.has(turn))) {
+          const list = hitsByTurn.get(hit.turn) ?? []
+          list.push(hit)
+          hitsByTurn.set(hit.turn, list)
+        }
+      }
+      for (const span of overflowSpans) {
+        const hits = hitsByTurn.get(span.turn)
+        if (hits === undefined) continue
+        try {
+          captureToolRecord({
+            store,
+            sessionId,
+            turn: span.turn,
+            hits,
+            settings: {
+              enabled: settings.l3ToolDistill,
+              maxChars: settings.l3ToolRecordChars,
+              maxPerSession: settings.l3ToolMaxPerSession,
+              maxRecords: settings.l3ToolMaxRecords,
+            },
+          })
+        } catch (error: unknown) {
+          // 工具细节是**可降级**的附加层：它写失败不能连带跳过同一轮的主内容蒸馏
+          // 与 L2 摘要（外层 catch 会把整个投影一起丢掉）。但也绝不能静默——桌面端
+          // 宿主日志不可见，所以这里至少留一条 warn。
+          context.logger.warn('[dsh-tri-layer-memory] 工具记录落库失败（跳过该轮，主内容不受影响）：%s',
+            error instanceof Error ? error.message : String(error))
+        }
+      }
+    }
+    for (const span of overflowSpans) {
       if (span.turn <= state.l3HighWaterTurn) continue
       store.put({
         kind: 'turn',
         sessionId,
         turnFrom: span.turn,
         turnTo: span.turn,
-        text: extractiveDigest([span]),
+        // 分层抽取（约束/排除/失败/推断按类型各自留预算），**只用于 L3 turn 记录**：
+        // 它不进注入，成本只有磁盘与剪枝频率。L2 摘要的回退路径仍用默认的 160 字
+        // 抽取（那里的正文每轮都要注入），两条路径分开定价，见 l2-render.ts。
+        text: extractiveDigest([span], { layered: true }),
         refs: [],
       })
       state.l3HighWaterTurn = Math.max(state.l3HighWaterTurn, span.turn)
@@ -1604,22 +1894,42 @@ async function refreshDigest(input: {
   }
 
   // 仍在 L2 窗口内、且未被当前摘要覆盖的轮 → 生成/刷新摘要。
+  //
+  // **这里修过一次"覆盖区间塌缩"**：旧实现把 `uncovered`（新增的 3 轮）直接喂给
+  // 模型，并把返回的 turnFrom/turnTo 当成新摘要的覆盖区间——于是每刷新一次，
+  // L2 就从"24 轮"缩到"最后 3 轮"，而中间轮次的原文早已溢出 L1、只留在被丢弃的
+  // 旧摘要里（L3 的 turn 记录保留率只有 2.1%，接不住这段）。滚动摘要的做法是：
+  // 输入 = 上一份摘要 + 新增轮，输出区间 = 整个 L2 窗口（`forL2` 首尾）。
+  // 旧摘要的结论通过输入延续，覆盖区间不再随刷新缩短；成本只有 1.25x（实测
+  // 6,740 vs 5,373 tok/次），而全量重算是 7.2x（38,780 tok/次）。
   const forL2 = evicted.slice(overflowCount)
   const uncovered = state.digest === null
     ? forL2
     : forL2.filter((span) => span.turn > (state.digest as DigestResult).turnTo)
   if (uncovered.length < settings.l2MinTurnsBeforeSummary) return
+  // 缺口：上一份摘要与新增轮之间漏了轮（例如 L1 一次大步溢出、或窗口大小被改小）。
+  // 那些轮既不在摘要里、也不在本批输入里，只喂增量会让它们从 L2 消失。此时退化为
+  // 全窗口重算（`forL2`），代价是一次更大的输入，但不会制造"看不见的缺口"。
+  const coveredTo = state.digest === null ? -1 : (state.digest as DigestResult).turnTo
+  const gap = coveredTo >= 0 && uncovered[0] !== undefined && uncovered[0].turn > coveredTo + 1
+  const fed = gap ? forL2 : uncovered
   const now = Date.now()
   if (settings.l2RefreshIntervalMs > 0 && now - state.lastDigestAt < settings.l2RefreshIntervalMs) return
 
   try {
-    const digest = await buildDigest(seam.llm, uncovered, {
+    const digest = await buildDigest(seam.llm, fed, {
       mode: settings.l2Mode,
       maxTokens: settings.l2MaxSummaryTokens,
       sessionId,
       agent: payload?.agent,
       // 推理档位随请求发出：摘要不需要深思，把预算让给正文（依据见 config-core.ts）。
       reasoningEffort: settings.internalCallReasoningEffort,
+      // 滚动摘要：上一份摘要一起进输入，并在指令里要求保留其中仍有效的结论。
+      // 首次摘要（state.digest === null）不带——那时 `uncovered` 就是整个窗口。
+      ...(state.digest === null ? {} : { previousText: (state.digest as DigestResult).text }),
+      // 区间报**整个 L2 窗口**，不是本批输入的范围（否则每次刷新都塌回 3 轮）。
+      windowFrom: forL2[0]?.turn ?? uncovered[0]?.turn ?? 0,
+      windowTo: forL2[forL2.length - 1]?.turn ?? uncovered[uncovered.length - 1]?.turn ?? 0,
       ...(payload?.signal === undefined ? {} : { signal: payload.signal }),
     })
     if (digest === null) return

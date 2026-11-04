@@ -11,7 +11,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -112,7 +113,7 @@ function mockContext(services = {}) {
       listeners.get(event).push({ listener, options })
     },
     // 真实 cordis 的 effect(fn) 会**立即调用** fn，并把返回值当作 disposer。
-    // 只收集不调用的话，所有走 effect 的注册（三个工具）都不会发生。
+    // 只收集不调用的话，所有走 effect 的注册（四个工具）都不会发生。
     effect(fn) { effects.push(fn()) },
     inject(deps, callback) {
       if (!deps.every((d) => available[d] !== undefined)) return
@@ -137,10 +138,10 @@ test('inject 必须为空：硬依赖缺席会让插件 pending，进而拖死�
   assert.deepEqual(inject, [], 'inject 必须为空数组——插件绝不能用硬依赖拖死宿主启动')
 })
 
-test('tools 在场：注册三个模型工具', () => {
+test('tools 在场：注册四个模型工具', () => {
   const { ctx, tools, listeners } = mockContext()
   assert.doesNotThrow(() => apply(ctx, {}), 'apply 抛错就等于插件挂载失败')
-  assert.equal(tools.length, 3, '应注册 3 个模型工具')
+  assert.equal(tools.length, 4, '应注册 4 个模型工具')
   assert.ok(listeners.has('agent/pre-step'), '应注册 agent/pre-step 监听')
 })
 
@@ -171,15 +172,15 @@ test('systemPrompt 缺席时：不注册提示段，也不影响工具与监听'
   const { ctx, tools, listeners, sections } = mockContext()
   assert.doesNotThrow(() => apply(ctx, { selfTestAfterBoot: false }))
   assert.equal(sections.length, 0)
-  assert.equal(tools.length, 3)
+  assert.equal(tools.length, 4)
   assert.ok(listeners.has('agent/pre-step'))
 })
 
-test('三个工具的 schema 全部落在宿主支持的类型子集内', () => {
+test('四个工具的 schema 全部落在宿主支持的类型子集内', () => {
   const { ctx, tools } = mockContext()
   apply(ctx, {})
   const names = tools.map((t) => t.name)
-  assert.deepEqual(names, ['memory_recall', 'memory_state', 'memory_verify'])
+  assert.deepEqual(names, ['memory_recall', 'memory_state', 'memory_verify', 'memory_dedupe'])
 
   for (const tool of tools) {
     assert.ok(typeof tool.name === 'string' && tool.name.length > 0, '工具必须有名字')
@@ -212,6 +213,73 @@ test('memory_state / memory_verify 在空会话下也能执行并返回结构化
   assert.equal(verifyResult.system, 'dsh-tri-layer-memory 验证报告')
   assert.ok(Array.isArray(verifyResult.verdicts) && verifyResult.verdicts.length >= 4, '应逐层给出判定')
   assert.ok(verifyResult.verdicts.some((v) => v.id === 'L3' && v.text.startsWith('SKIP')), 'L3 关闭时应为 SKIP')
+})
+
+test('memory_dedupe 走真实 apply 链路：state 报重复、默认 dry-run 不改文件、真删留备份且幂等', async () => {
+  // 这是"双 owner 事故"的回归用例：去重必须由插件自己的 store 做。
+  // 断言点不是"工具注册了"，而是：memory_state 能看见重复、dry-run 一个字节不改、
+  // 真删后磁盘与内存一致、第二次不再删也不再备份。
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-mount-dedupe-'))
+  try {
+    /** 造一条已落库记录（模拟历史进程反复重启留下的重复副本）。 */
+    const record = (id, createdAt, text, extra = {}) => JSON.stringify({
+      id, kind: 'turn', createdAt, sessionId: 's-dup', turnFrom: 5, turnTo: 5,
+      text, tokens: 3, keywords: ['重复'], refs: [], ...extra,
+    })
+    const jsonl = join(dir, 'deep-memory.jsonl')
+    // 三条同 (session, kind, 轮 5) 的副本：两条正文一致（保留最新），一条更长（必须保留最长的）。
+    writeFileSync(jsonl, [
+      record('l3-a', 1000, '第五轮的副本'),
+      record('l3-b', 3000, '第五轮的副本'),
+      record('l3-c', 2000, '第五轮的副本——这一份正文更长，不能为了排序稳定丢掉它'),
+      record('l3-d', 4000, '另一轮不该被碰', { turnFrom: 6, turnTo: 6 }),
+      // 一条引用被删副本的记录：删完必须改指 l3-c，不能悬空。
+      JSON.stringify({
+        id: 'l3-m', kind: 'milestone', createdAt: 5000, sessionId: 's-dup', turnFrom: 5, turnTo: 5,
+        text: '里程碑', tokens: 2, keywords: [], refs: ['l3-a'],
+      }),
+    ].join('\n') + '\n', 'utf8')
+
+    const { ctx, tools } = mockContext()
+    apply(ctx, { l3Dir: dir, l3Enabled: true, l3Store: 'jsonl', l2Mode: 'off', selfTestAfterBoot: false })
+    // store.open() 是异步的（真实宿主里也是）：等它载入文件再调工具。
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const state = tools.find((t) => t.name === 'memory_state')
+    const dedupe = tools.find((t) => t.name === 'memory_dedupe')
+    assert.ok(dedupe !== undefined, 'memory_dedupe 必须真的注册进工具表')
+
+    const stateResult = await state.execute({}, { agent: { session: undefined } })
+    assert.equal(stateResult.layers.L3.duplicateGroups, 1, 'memory_state 必须报出重复组数')
+    assert.equal(stateResult.layers.L3.duplicateRecords, 2, 'memory_state 必须报出可删条数')
+    assert.equal(stateResult.layers.L3.duplicateDifferingGroups, 1, '正文不一致的组要单独报')
+
+    const hash = () => createHash('sha256').update(readFileSync(jsonl)).digest('hex')
+    const beforeHash = hash()
+    const planned = await dedupe.execute({}, { agent: {} })
+    assert.equal(planned.dryRun, true, '不传 dryRun 必须是 dry-run')
+    assert.equal(planned.removed, 2)
+    assert.equal(hash(), beforeHash, 'dry-run 后库文件必须逐字节相同')
+
+    const applied = await dedupe.execute({ dryRun: false }, { agent: {} })
+    assert.equal(applied.applied, true)
+    assert.equal(applied.removed, 2)
+    assert.equal(applied.after, 3, '5 条里删 2 条副本（l3-a、l3-b），剩 3 条')
+    assert.ok(applied.backupPath !== null && existsSync(applied.backupPath), '真删前必须有备份')
+    const kept = readFileSync(jsonl, 'utf8').split('\n').filter((line) => line.trim().length > 0).map((line) => JSON.parse(line))
+    const milestone = kept.find((entry) => entry.id === 'l3-m')
+    assert.deepEqual(milestone.refs, ['l3-c'], '指向被删副本的 refs 必须改指保留的那条')
+    assert.ok(kept.some((entry) => entry.id === 'l3-c'), '正文最长的 l3-c 必须留下')
+    assert.ok(!kept.some((entry) => entry.id === 'l3-a' || entry.id === 'l3-b'), '被删副本不能残留在文件里')
+
+    const backups = readdirSync(dir).filter((entry) => entry.includes('.bak-'))
+    assert.equal(backups.length, 1)
+    const again = await dedupe.execute({ dryRun: false }, { agent: {} })
+    assert.equal(again.removed, 0, '第二次调用必须幂等')
+    assert.equal(readdirSync(dir).filter((entry) => entry.includes('.bak-')).length, 1, '幂等调用不应再产生备份')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('工具参数校验：类型错误与枚举越界会被拦下', async () => {
@@ -258,8 +326,10 @@ test('pre-step 监听会注入三层投影，且内容不变时不重复注入',
     assert.match(text, /三层记忆 · 本轮投影/)
     assert.match(text, /L1 工作记忆/)
     assert.match(text, /L2 短期记忆/)
-    assert.match(text, /最近 8 轮/, 'L1 默认保留 8 轮')
-    assert.match(text, /较早的 4 轮已进入 L2\/L3/, '12 轮应有 4 轮溢出')
+    assert.match(text, /最近 8 轮真实对话/, 'L1 默认保留 8 轮')
+    // 剪枝后只报窗口边界；"较早的 N 轮已进入 L2/L3"这类同义反复不再注入。
+    assert.doesNotMatch(text, /较早的 \d+ 轮已进入 L2\/L3/, 'L1 元信息废话已删')
+    assert.doesNotMatch(text, /估算占用/, '估算占用会被误读成限额，已删')
     assert.equal(first.messages[0].role, 'user', '注入必须是 user 角色消息')
     // v4 会话格式要求生产者自有的 kind：写 `{kind:'plugin'}` 会让整轮在写入时被拒绝。
     assert.equal(first.messages[0].source.kind, 'dsh-tri-layer-memory')
@@ -285,7 +355,13 @@ test('pre-step 监听会注入三层投影，且内容不变时不重复注入',
     apply(ctx2, { l3Dir: dir, l3Enabled: true, l3Store: 'jsonl', selfTestAfterBoot: false })
     await new Promise((resolve) => setTimeout(resolve, 50))
     const recall = tools2.find((t) => t.name === 'memory_recall')
-    const result = await recall.execute({ query: '记忆压缩' }, { agent: { session } })
+    // limit 必须覆盖**全部**已蒸馏的轮（这里是 10 轮 turn + 1 条 digest）。
+    // 为什么：这个合成会话的每一轮都是同一个模板，所有记录命中同一批词，IDF 权重相同、
+    // 分数并列，默认只取 5 条时"谁进前 5"由 createdAt 决定。用例要证明的是
+    // "最早的轮被蒸馏进了 L3"，不是"它恰好排在前 5"——旧版取默认 5 条能过，是因为
+    // digest 当时排第一、而 digest 正文里也复述了"第1轮"，属于**误打误撞**；
+    // digest 降权后这个假象消失（见 l3-deep.ts 的 DIGEST_WEIGHT）。
+    const result = await recall.execute({ query: '记忆压缩', limit: 12 }, { agent: { session } })
     // 必须断言**真的命中**：memory_recall 在未命中时同样会输出 "## L3 深层记忆"
     // 标题，只匹配标题等于什么都没验证。
     assert.match(result, /命中 \d+ 条/, `应真正检索到 L3 记录，实际输出：${result.slice(0, 200)}`)
@@ -293,6 +369,63 @@ test('pre-step 监听会注入三层投影，且内容不变时不重复注入',
     assert.doesNotMatch(result, /未命中/, '不应是未命中分支')
     // 超出 L2 保留窗口的最旧轮应已作为 kind=turn 的记录落库。
     assert.match(result, /第1轮|第2轮|第3轮/, '最早溢出 L2 窗口的轮次应被蒸馏进 L3')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('重启不重蒸：水位从 L3 库推出，同一个会话重启后不再写第二份', async () => {
+  // 真实故障：`l3HighWaterTurn` 只活在 SessionState 里，进程重启即归零，于是同一轮被
+  // 重新蒸馏一遍。记录 id 由 createdAt + seq 生成，所以每重启一次就多一条副本——
+  // 实测某会话 1188 条里 1044 条是重复，turn 1 有 32 份。
+  //
+  // 这个用例真跑两次 apply()（= 两个全新的 SessionState），共用同一个库目录：
+  // 第一次必须写出记录，第二次**一条都不许新增**。没有"从库推水位"时第二次会
+  // 原样再写一遍（下面注释里的实测数字就是这么来的）。
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-restart-'))
+  try {
+    // 造 42 轮：L1 保留 8 轮、L2 保留 24 轮 → 溢出 34 轮里有 10 轮该进 L3。
+    const events = []
+    let seq = 0
+    for (let turn = 1; turn <= 42; turn += 1) {
+      events.push({ type: 'turn/start', seq: seq++, data: { turn } })
+      events.push({ type: 'user/message', seq: seq++, data: { content: [{ type: 'text', text: `第${turn}轮：继续处理记忆压缩` }] } })
+      events.push({ type: 'assistant/message', seq: seq++, data: { message: { content: [{ type: 'text', text: `第${turn}轮完成。` }] } } })
+      events.push({ type: 'turn/end', seq: seq++, data: { turn } })
+    }
+    const session = { id: 's-restart', events }
+    const payload = { agent: { session }, turn: 42, step: 1, signal: { aborted: false } }
+    const next = async () => ({ kind: 'enter', messages: [] })
+    /** 起一个全新的插件实例（= 进程重启），返回它的 pre-step 监听。 */
+    const boot = async () => {
+      const { ctx, listeners } = mockContext()
+      apply(ctx, { l3Dir: dir, l3Enabled: true, l3Store: 'jsonl', l2Mode: 'extractive', selfTestAfterBoot: false })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return listeners.get('agent/pre-step')[0]
+    }
+    /** 读出库里某个会话的 turn 记录。 */
+    const turnRecords = () => readFileSync(join(dir, 'deep-memory.jsonl'), 'utf8')
+      .split('\n').filter((line) => line.trim().length > 0).map((line) => JSON.parse(line))
+      .filter((record) => record.kind === 'turn' && record.sessionId === 's-restart')
+
+    const first = await boot()
+    await first.listener(payload, next)
+    const afterFirst = turnRecords()
+    assert.equal(afterFirst.length, 10, `第一次应蒸馏 turn 1–10，实际 ${afterFirst.length} 条`)
+    assert.equal(new Set(afterFirst.map((record) => record.turnTo)).size, afterFirst.length,
+      '第一次运行里同一轮不许出现两份')
+
+    // 重启：全新 ctx、全新 SessionState，同一个库、同一个会话。
+    const second = await boot()
+    await second.listener(payload, next)
+    const afterSecond = turnRecords()
+    assert.equal(afterSecond.length, afterFirst.length,
+      `重启后不得再写一份：前 ${afterFirst.length} 条 → 后 ${afterSecond.length} 条`
+      + '（旧实现会变成 20 条，每轮两份）')
+    assert.deepEqual(afterSecond.map((record) => record.id).sort(), afterFirst.map((record) => record.id).sort(),
+      '重启后连记录 id 都不该变（一条新的都没有）')
+    assert.equal(new Set(afterSecond.map((record) => record.turnTo)).size, afterSecond.length,
+      '重启后仍不许有同轮副本')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -407,4 +540,69 @@ test('readEvents：snapshotEvents 抛错时不让 pre-step 挂掉', async () => 
       async () => ({ kind: 'enter', messages: [] }),
     )
   }, '会话未就绪不该让 pre-step 抛错')
+})
+
+test('工具输出进 L3：pre-step 真写 kind=tool，且注入里只出现计数、不出现正文', async () => {
+  // 这是"接线"用例：前面 tool-digest 的单测只证明函数本身对，证明不了 index.ts 的
+  // 推进循环真的调用了它、且设置项/水位/注入三处没有把结果吃掉。
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-tools-'))
+  try {
+    const { ctx, listeners } = mockContext()
+    apply(ctx, {
+      l3Dir: dir,
+      l3Enabled: true,
+      l3Store: 'jsonl',
+      l2Mode: 'extractive',
+      l1RetainTurns: 8,
+      l2RetainTurns: 24,
+      selfTestAfterBoot: false,
+    })
+    // 后端是异步打开的；不等到 ready，蒸馏这一步会被 `storeReady` 直接跳过。
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const events = []
+    let seq = 0
+    for (let turn = 1; turn <= 42; turn += 1) {
+      events.push({ type: 'turn/start', seq: seq++, data: { turn } })
+      events.push({ type: 'user/message', seq: seq++, data: { content: [{ type: 'text', text: `第${turn}轮：继续处理记忆压缩` }] } })
+      events.push({ type: 'assistant/message', seq: seq++, data: { message: { content: [{ type: 'text', text: `第${turn}轮完成。` }] } } })
+      events.push({ type: 'tool/call', seq: seq++, data: { callId: `c${turn}`, name: 'pwsh' } })
+      events.push({
+        type: 'tool/result',
+        seq: seq++,
+        data: {
+          message: {
+            toolCallId: `c${turn}`,
+            content: [{ type: 'text', text: `TOOL-SENTINEL-${turn}\n诊断输出 `.repeat(80) + `\nTAIL-${turn}` }],
+          },
+        },
+      })
+      events.push({ type: 'turn/end', seq: seq++, data: { turn } })
+    }
+    const session = { id: 's-tools', events }
+    const entry = listeners.get('agent/pre-step')[0]
+    const decision = await entry.listener(
+      { agent: { session }, turn: 42, step: 1, signal: { aborted: false } },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+
+    const file = join(dir, 'deep-memory.jsonl')
+    assert.ok(existsSync(file), 'L3 应已落盘')
+    const records = readFileSync(file, 'utf8').trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+    const toolRecords = records.filter((record) => record.kind === 'tool')
+    assert.ok(toolRecords.length > 0, '溢出 L2 窗口的工具输出应写成 kind=tool 记录')
+    assert.ok(toolRecords.every((record) => Array.isArray(record.refs) && record.refs.length === 0),
+      '工具记录不得有 refs（否则会靠入边豁免挤占主内容）')
+    assert.ok(toolRecords.some((record) => record.turnFrom === 1), '最早溢出的第 1 轮工具输出应落库')
+    assert.ok(toolRecords.every((record) => record.text.includes('工具原始输出（非结论）')))
+
+    const injected = (decision?.messages ?? [])
+      .flatMap((m) => (Array.isArray(m?.content) ? m.content : []))
+      .map((c) => (typeof c?.text === 'string' ? c.text : ''))
+      .join('\n')
+    assert.match(injected, /另有工具原始输出 \d+ 条/, '注入里应报工具条数')
+    assert.ok(!injected.includes('TOOL-SENTINEL'), '工具正文绝不能进每轮注入')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

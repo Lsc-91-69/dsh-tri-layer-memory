@@ -1426,6 +1426,197 @@ function renderMilestone(m: Milestone): string {
   return `${span}: ${m.title} — ${m.cause}`
 }
 
+// ─────────────────── 注入剪枝：低信息量条目 ───────────────────
+//
+// 实测（真实会话 s5b，60 条骨架 / 1,559 tokens）：42 条（70%）的 `cause` 是
+// `原因不明` / `仅对话，无代码变更` / `用户追问` / `排查中，无结论` 这类**模板标签**。
+// 它们只回答"这一轮有没有拿到结论"，不携带任何对象——挂在每一行尾部，就是每轮
+// 白付 300–400 tokens。
+//
+// 但一刀切按 cause 删行会误剪，实测有两种反例：
+// 1. `第 33 轮: 本轮最重要的产出：找到一个真 bug 并修掉了 — 原因不明`：cause 是
+//    模板，标题才是里程碑。整行删掉就是丢主线。
+// 2. `第 91 轮: 兼容性审计结果 — 未解决`：标题只说了"做了什么"（话题），
+//    `未解决` 才是这一行唯一的状态信息。删 cause 等于把一条结论变成标题废话。
+//
+// 所以剪枝按"**cause 空转** + **标题是否自身就是一份结论**"两段判定，且默认
+// 保守：判不准就整行原样保留（多花 26 tokens 远好于丢一条真里程碑）。
+//
+// 这段代码只服务**注入路径**（`renderInjectedMainline`）。思维栏/面板走的是
+// `projection.ts` 的结构化字段，不受这里影响——面板可以更啰嗦，注入必须收紧。
+
+/** `cause` 里"说不出任何对象"的模板片段。 */
+const EMPTY_CAUSE_FRAGMENTS: ReadonlySet<string> = new Set([
+  '原因不明', '根因不明', '仅对话', '无代码变更', '用户追问', '未解决', '无结论',
+  '排查中', '稳定期', '无新问题', '会话初始任务',
+])
+
+/** 标题里出现即说明"这一行说了发生了什么"的结果词（保守：宁可留下）。 */
+const RESULT_PATTERN = /成功|完成|通过|失败|报错|错误|异常|卡住|卡死|遮挡|为空|丢失|删除|超时|中断|崩溃|启用|关闭|修复|部署|安装|回滚|还原|查清|定位|新增|改成|换成/
+
+/** 领域名词：标题里有它，说明用户问的不是"继续/可以"这类空话。 */
+const DOMAIN_PATTERN = /压缩|记忆|遗忘|取回|上下文|投影|窗口|思维栏|面板|骨架|摘要|插件|宿主|客户端|部署|版本|测试|代码|接口|契约|对话|文件|数据库|预算|额度|上限|授权|recall|token/i
+
+/** 时间指代：出现它往往意味着标题在描述"刚才发生了什么"，不是纯应答。 */
+const TIME_PATTERN = /刚才|刚刚|之前|上轮|这一轮|这次|上次/
+
+/** 纯应答（寒暄/确认），后面跟什么都可以是空话。 */
+const PURE_REPLY = /^(可以|好|行|嗯|哦|收到|明白|ok|OK)[，,。！!、\s]*/
+
+/** 纯指代指令：只有动作与指代，没有对象。 */
+const PURE_ORDER = /^(先做|继续|开始|按|做|处理|看)[\s\S]{0,12}$/
+
+/** 注入路径上一条里程碑的处置方式。 */
+export type MainlineTrim = 'keep' | 'strip-cause' | 'drop'
+
+/** 注入剪枝后的一行（编号由渲染器加）。 */
+export interface PrunedMainlineLine {
+  /** 行正文（不含编号）：`第 12 轮: 标题` 或 `第 12 轮: 标题 — 原因`。 */
+  text: string
+  /** 这一行里的里程碑。 */
+  milestone: Milestone
+  /** 这条被怎么处理了。 */
+  trim: MainlineTrim
+}
+
+/** 注入剪枝的结果（含供人工复核的完整清单）。 */
+export interface MainlinePruneResult {
+  /** 真正会进注入的行，顺序与原骨架一致。 */
+  lines: PrunedMainlineLine[]
+  /** 因"标题也是空话"被整条删掉的条目。 */
+  dropped: Milestone[]
+  /** 因"标题自身就是结论"被去掉 cause 的条目。 */
+  stripped: Milestone[]
+}
+
+/**
+ * `cause` 是否全部由模板片段组成。
+ *
+ * 按标点切段逐段匹配：`仅对话，无代码变更` 切出来两段都在集合里 → 空转；
+ * `未解决，方向变更（不要）` 里 `方向变更（不要）` 不在集合 → 不是空转（整行保留）。
+ *
+ * @param cause - 一行 milestone 的原因从句。
+ * @returns 全是模板标签时为 true。
+ */
+export function isTemplateCause(cause: string): boolean {
+  const text = norm(cause)
+  if (text.length === 0) return true
+  const fragments = text.split(/[，,、；;]/).map((part) => part.trim()).filter((part) => part.length > 0)
+  return fragments.length > 0 && fragments.every((fragment) => EMPTY_CAUSE_FRAGMENTS.has(fragment))
+}
+
+/**
+ * 标题是否带"具体锚点"——数字、两位以上 ASCII、引号、结果词、领域名词或时间指代。
+ *
+ * 有锚点说明标题自身陈述了一件具体的事，去掉模板 cause 不会丢信息。
+ *
+ * @param title - 里程碑标题。
+ * @returns 有锚点时为 true。
+ */
+export function hasConcreteAnchor(title: string): boolean {
+  const text = norm(title)
+  if (/[0-9]/.test(text)) return true
+  if (/[A-Za-z]{2,}/.test(text)) return true
+  if (/[「」“”《》]/.test(text)) return true
+  return RESULT_PATTERN.test(text) || DOMAIN_PATTERN.test(text) || TIME_PATTERN.test(text)
+}
+
+/**
+ * 标题是否只是招呼/确认/指代，没有任何可执行信息。
+ *
+ * 这是剪枝里**唯一会整条删行**的判据，所以刻意收得很窄：只在标题短、没有数字、
+ * 没有两位以上 ASCII、没有引号、没有领域名词、没有时间指代时，才认定它是
+ * "纯问句 / 纯应答 / 纯指令"。任何一条不满足都退回"保留"（见
+ * {@link pruneMainlineForInjection}）。
+ *
+ * @param title - 里程碑标题。
+ * @returns 整条可以删时为 true。
+ */
+export function isPureChatter(title: string): boolean {
+  const text = norm(title)
+  if (text.length > 14) return false
+  if (/[0-9]|[A-Za-z]{2,}|[「」“”《》]/.test(text)) return false
+  if (DOMAIN_PATTERN.test(text) || TIME_PATTERN.test(text)) return false
+  const question = /[？?]\s*$|(吗|呢)\s*$/.test(text)
+    || /什么|怎么|为什么|是否|有没有|如何|哪/.test(text)
+  if (question) return text.length <= 12
+  return PURE_REPLY.test(text) || PURE_ORDER.test(text)
+}
+
+/** 渲染一行（不含编号）；`cause` 为空时不输出 ` — `。 */
+function renderRow(m: Milestone, cause: string): string {
+  const span = m.turnTo === undefined || m.turnTo === m.turn ? `第 ${m.turn} 轮` : `第 ${m.turn}–${m.turnTo} 轮`
+  const tail = cause.length > 0 ? ` — ${cause}` : ''
+  return `${span}: ${m.title}${tail}`
+}
+
+/**
+ * 按"信息量"给骨架条目分档（纯函数，只读 title/cause）。
+ *
+ * 三档判据（顺序即优先级）：
+ * 1. `cause` 不是模板标签 → **keep**（原因本身是信息）；
+ * 2. 标题是纯问句/纯应答/纯指代 → **drop**（整条不注入）；
+ * 3. 标题带具体锚点 → **strip-cause**（标题即结论，只去模板尾巴）；
+ * 4. 其余 → **keep**（标题只是话题、cause 才是状态，判不准就整行留着）。
+ *
+ * @param milestone - 一条里程碑。
+ * @returns 处置方式。
+ */
+export function classifyMainline(milestone: Milestone): MainlineTrim {
+  if (!isTemplateCause(milestone.cause)) return 'keep'
+  if (isPureChatter(milestone.title)) return 'drop'
+  if (hasConcreteAnchor(milestone.title)) return 'strip-cause'
+  return 'keep'
+}
+
+/**
+ * 生成注入用的骨架行（已按信息量剪枝，未加编号、未套块头）。
+ *
+ * @param milestones - {@link extractMilestones} 的输出（seq 升序）。
+ * @returns 行列表与两份可复核清单（被整条删掉的、被去掉 cause 的）。
+ */
+export function pruneMainlineForInjection(milestones: readonly Milestone[]): MainlinePruneResult {
+  const lines: PrunedMainlineLine[] = []
+  const dropped: Milestone[] = []
+  const stripped: Milestone[] = []
+  for (const milestone of milestones) {
+    const trim = classifyMainline(milestone)
+    if (trim === 'drop') {
+      dropped.push(milestone)
+      continue
+    }
+    if (trim === 'strip-cause') {
+      stripped.push(milestone)
+      lines.push({ text: renderRow(milestone, ''), milestone, trim })
+      continue
+    }
+    lines.push({ text: renderRow(milestone, milestone.cause), milestone, trim })
+  }
+  return { lines, dropped, stripped }
+}
+
+/**
+ * 渲染注入用骨架：块头 + 任务标题 + 已剪枝的行（重新编号）。
+ *
+ * 与 {@link renderMainline} 的分工：那个是**全量**渲染（思维栏/审计/可行性脚本），
+ * 这个是**注入**渲染（模型每一轮真的要付 token 的那份）。
+ *
+ * @param milestones - 已剪枝的行（{@link pruneMainlineForInjection} 的输出）。
+ * @param taskTitle - 会话任务标题。
+ * @returns 注入文本。
+ */
+export function renderPrunedMainline(lines: readonly PrunedMainlineLine[], taskTitle?: string): string {
+  const out: string[] = ['## 里程碑主线骨架（Milestone Mainline）']
+  const title = taskTitle === undefined ? '' : norm(taskTitle)
+  if (title.length > 0) out.push(`- 任务：${clip(title, TITLE_MAX)}`)
+  if (lines.length === 0) {
+    out.push('- （本会话尚无可提取的里程碑）')
+    return out.join('\n')
+  }
+  out.push(...lines.map((line, index) => `${String(index + 1).padStart(3)}. ${line.text}`))
+  return out.join('\n')
+}
+
 /**
  * 把会话事件流压成里程碑主线。
  *

@@ -123,6 +123,53 @@ if (dryRun) {
 }
 
 console.log(`已写入 ${copied} 个文件`)
+
+// ── 4. 同步 profile 的依赖声明 ────────────────────────────────────────────
+//
+// **为什么必须有这一步**：profile 的 `package.json` 里 `dependencies` 写着
+// `file:<某版本的 .tgz>`。只管覆盖 `lib/` 而不改这一行，就等于留了一个回滚陷阱：
+//
+//   - 用户之后装/删**任何**插件 → 宿主跑一次 pnpm install
+//   - pnpm 按声明把本插件**重新解包成那个旧 tgz** 的版本
+//   - 我们刚部署的新代码被整体覆盖，而且**没有任何报错**
+//
+// 这不是假想：2026-10-23 和 10-27 各发生过一次，两次都表现为「部署成功、几天后
+// 发现跑的还是旧版」。那种失败极难查——版本号在 node_modules 里，而人看的是 UI。
+//
+// 所以部署必须让**声明跟着产物一起走**：把这次版本的 tgz 落到 vendor/，并把声明
+// 指向它。这样即使之后跑了 pnpm，装回来的也是这一版。
+{
+  const { readFileSync: rf, writeFileSync: wf, copyFileSync: cf } = await import('node:fs')
+  const profileDir = join(dshHome(), 'profiles', profile)
+  const pkgPath = join(profileDir, 'package.json')
+  const vendorDir = join(profileDir, 'vendor')
+  const tgzName = `dsh-tri-layer-memory-${version}.tgz`
+  const tgzSrc = join(root, tgzName)
+  const tgzDst = join(vendorDir, tgzName)
+
+  if (!existsSync(tgzSrc)) {
+    console.log('')
+    console.log(`⚠ vendor 里没有 ${tgzName}（先跑 npm pack）。`)
+    console.log('  依赖声明**未同步** —— 之后若跑 pnpm install，插件会被换回声明里的旧版本。')
+  } else {
+    mkdirSync(vendorDir, { recursive: true })
+    cf(tgzSrc, tgzDst)
+    const pkg = JSON.parse(rf(pkgPath, 'utf8'))
+    pkg.dependencies = pkg.dependencies ?? {}
+    const before = pkg.dependencies['dsh-tri-layer-memory']
+    const spec = `file:${tgzDst.replace(/\\/g, '/')}`
+    if (before === spec) {
+      console.log(`依赖声明已是 v${version}，未改动`)
+    } else {
+      pkg.dependencies['dsh-tri-layer-memory'] = spec
+      wf(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+      console.log(`依赖声明已同步 → v${version}`)
+      if (before !== undefined) console.log(`  （原为 ${String(before).split('/').pop()}）`)
+      console.log('  注意：pnpm-lock.yaml 仍是旧的；下次 pnpm install 会按新声明重装，属预期。')
+    }
+  }
+}
+
 console.log('')
 console.log('下一步：重新激活插件，让薄壳用新的 ?generation= 重新 import impl.js。')
 console.log('  宿主半边会立刻换新；客户端半边（思维栏）需要刷新页面重新 materialize。')
