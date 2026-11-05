@@ -109,6 +109,33 @@ export interface ToolResultHit {
   text: string
 }
 
+/**
+ * 一次工具调用的**参数原文**（供 L3 约束原话抽取用）。
+ *
+ * 为什么要有它：`tool/result` 只承载"工具做了什么"，而"人要工具**别**做什么"
+ * 大多写在 `tool/call.arguments` 里（写进 README 的约束句、源码注释里的铁律、
+ * 测试名里的断言）。实测 10 条硬约束里 5 条的原文**只**存在于 `tool/call`，
+ * 只读 `tool/result` 的抽取路径永远救不回它们。
+ *
+ * 与 {@link ToolResultHit} 一样不进 {@link TurnSpan}：参数是几万字符的整份文件内容，
+ * 挂到 span 上会让任何按 span 量体积的地方重复计数。用回调递给收集者。
+ */
+export interface ToolCallHit {
+  /** 事件 seq，用于回指原日志。 */
+  seq: number
+  /** 所属轮号。 */
+  turn: number
+  /** 工具名（`tool/call` 自带 `name`）。 */
+  name: string
+  /**
+   * 参数原文（`data.arguments`）。
+   *
+   * **保留 JSON 字符串形态**、不在这一层解析：解析失败时的退化策略（按原文扫描）
+   * 属于抽取层，而且这里每多一次 `JSON.parse` 就多一份长会话里的固定开销。
+   */
+  args: string
+}
+
 /** 一轮对话在日志中的位置与体量。 */
 export interface TurnSpan {
   /** 轮号（`turn/start` 事件携带的 turn）。 */
@@ -268,11 +295,15 @@ function turnOf(event: EventLike): number | undefined {
  * @param events - 会话事件数组（`session.events`）。
  * @param onToolResult - 可选：每条 `tool/result` 的正文回调。**默认不调用**，因此
  *   普通投影（L1/L2/骨架）的开销与行为完全不变；只有 L3 工具蒸馏会传它。
+ * @param onToolCall - 可选：每条 `tool/call` 的名称与参数回调。同样默认不调用；
+ *   只有 L3 约束原话抽取会传它。轮归属用**本轮 span 的 turn**（而不是事件自带的
+ *   `data.turn`），与 `tool/result`/`turn/start` 走同一套归属，避免两处轮号对不上。
  * @returns 按时间顺序的轮跨度（旧 → 新）。
  */
 export function projectTurns(
   events: readonly EventLike[],
   onToolResult?: (hit: ToolResultHit) => void,
+  onToolCall?: (hit: ToolCallHit) => void,
 ): TurnSpan[] {
   const spans: TurnSpan[] = []
   let current: TurnSpan | null = null
@@ -330,6 +361,11 @@ export function projectTurns(
       const callId = str(data.callId)
       const callName = str(data.name)
       if (callId !== undefined && callName !== undefined) callNames.set(callId, callName)
+      // 参数只在有人监听时递出去（不传回调的路径一个字符串都不复制）。
+      if (onToolCall !== undefined) {
+        const args = str(data.arguments)
+        if (args !== undefined) onToolCall({ seq, turn: current.turn, name: callName ?? 'unknown', args })
+      }
       continue
     }
 
@@ -389,6 +425,28 @@ export function collectToolResults(
 ): ToolResultHit[] {
   const out: ToolResultHit[] = []
   projectTurns(events, (hit) => {
+    if (wantTurn(hit.turn)) out.push(hit)
+  })
+  return out
+}
+
+/**
+ * 收集指定轮的工具调用（名称 + 参数原文）。
+ *
+ * 与 {@link collectToolResults} 同一套轮归属（都经 {@link projectTurns}）：如果
+ * 这里自己再实现一遍"这条 tool/call 属于哪一轮"，下次修归属就只会修一处——
+ * 那正是本项目反复出现的"看起来在工作"的形态。
+ *
+ * @param events - 会话事件数组。
+ * @param wantTurn - 只回传这些轮的调用（其余轮的参数不复制，长会话里这是主要开销）。
+ * @returns 命中的工具调用（旧 → 新）。
+ */
+export function collectToolCalls(
+  events: readonly EventLike[],
+  wantTurn: (turn: number) => boolean,
+): ToolCallHit[] {
+  const out: ToolCallHit[] = []
+  projectTurns(events, undefined, (hit) => {
     if (wantTurn(hit.turn)) out.push(hit)
   })
   return out

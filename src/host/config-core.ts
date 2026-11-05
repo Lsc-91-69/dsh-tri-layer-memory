@@ -125,6 +125,20 @@ export interface TriLayerConfig {
   l3ToolMaxPerSession: number
   /** 整库最多几条工具记录（超出后滚动淘汰最旧的工具记录）。 */
   l3ToolMaxRecords: number
+  /**
+   * 是否把 `tool/call` 参数里的**约束原话**抽成 `constraint` 记录落进 L3（默认开）。
+   *
+   * 与 {@link l3ToolDistill} 分开的理由：这两条路读的是**不同事件**（工具结果 vs
+   * 工具参数），关掉一条不该连带影响另一条。实测 10 条硬约束里 5 条的原文只存在于
+   * `tool/call`，所以这条默认开——关掉等于让那 5 条无法 recall。
+   */
+  l3ConstraintDistill: boolean
+  /** 单条约束记录正文字符上限。 */
+  l3ConstraintRecordChars: number
+  /** 每会话最多几条约束记录（达到后不再写；已有记录不删）。 */
+  l3ConstraintMaxPerSession: number
+  /** 整库最多几条约束记录（超出后按约束强度淘汰最弱/最新的）。 */
+  l3ConstraintMaxRecords: number
 
   // ── 主线骨架 ─────────────────────────────────────────────────────────
   /**
@@ -257,6 +271,20 @@ export const DEFAULTS: TriLayerConfig = {
   l3ToolRecordChars: 3000,
   l3ToolMaxPerSession: 24,
   l3ToolMaxRecords: 96,
+  // 约束细节池：默认开。三个上限的乘法就是硬上界——
+  //   单条 12000 字符 × 每会话 60 条 = 720,000 字符/会话（CJK 最坏 ≈ 720k tokens）
+  //   整库 300 条 × 12000 = 3,600,000 字符（理论上界；实测每条约 1,200 字符）
+  // 12000 字符：实测本会话 turn 1 的约束句全文 9,270 字符（最密的一轮：216 次工具
+  //   调用把整个项目初始文件写了一遍）。6000 会在这一轮截掉 `两者绝不能同时启用`
+  //   与 `patch 每行 name 必须可解析` 两条致命约束——**实测过**，所以下限必须让
+  //   最密的一轮完整放下。超限时按约束强度裁剪（先丢弱句），不是截尾。
+  // 60 条/会话：实测开发会话 55 轮含约束句，60 覆盖整段历史；普通编码会话远低于此。
+  // 300 条整库：按实测每条约 1,200 字符算 ≈ 360,000 字符 ≈ 90k tokens；超过后按
+  //   "约束强度"淘汰——先丢弱约束，不会丢 turn 1 的铁律（见 l3-deep.ts）。
+  l3ConstraintDistill: true,
+  l3ConstraintRecordChars: 12000,
+  l3ConstraintMaxPerSession: 60,
+  l3ConstraintMaxRecords: 300,
 
   mainlineEnabled: true,
   mainlineInject: true,
@@ -347,6 +375,14 @@ export function resolveConfig(raw: unknown): TriLayerConfig {
     // 上限 500：与 l3MaxRecords 同量级；工具池再大就已经不是"细节"而是第二份全文库。
     l3ToolMaxPerSession: clampInt(s.l3ToolMaxPerSession, 1, 500, DEFAULTS.l3ToolMaxPerSession),
     l3ToolMaxRecords: clampInt(s.l3ToolMaxRecords, 1, 20_000, DEFAULTS.l3ToolMaxRecords),
+
+    l3ConstraintDistill: pickBool(s.l3ConstraintDistill, DEFAULTS.l3ConstraintDistill),
+    // 下限 800：低于它连"头部两行 + 一句 420 字符的上限句子"都放不下，落库只会得到
+    // 残句；上限 20000 与工具池同源（再长就不是"约束清单"而是"参数副本"）。
+    l3ConstraintRecordChars: clampInt(s.l3ConstraintRecordChars, 800, 20_000, DEFAULTS.l3ConstraintRecordChars),
+    // 上限 500：与 l3MaxRecords 同量级；约束池再大就已经不是"规则"而是第二份全文库。
+    l3ConstraintMaxPerSession: clampInt(s.l3ConstraintMaxPerSession, 1, 500, DEFAULTS.l3ConstraintMaxPerSession),
+    l3ConstraintMaxRecords: clampInt(s.l3ConstraintMaxRecords, 1, 20_000, DEFAULTS.l3ConstraintMaxRecords),
 
     mainlineEnabled: pickBool(s.mainlineEnabled, DEFAULTS.mainlineEnabled),
     mainlineInject: pickBool(s.mainlineInject, DEFAULTS.mainlineInject),

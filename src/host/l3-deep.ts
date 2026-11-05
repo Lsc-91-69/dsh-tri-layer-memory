@@ -25,16 +25,22 @@ export interface MemoryRecord {
   id: string
   /**
    * `digest` L2 淘汰下来的摘要；`turn` 单轮原文；`artifact` 工具产物/文件读取；
-   * `milestone` 主线骨架的一条里程碑；`tool` 单轮工具输出的摘录。
+   * `milestone` 主线骨架的一条里程碑；`tool` 单轮工具输出的摘录；
+   * `constraint` 单轮 `tool/call` 参数里抽出的约束原话。
    *
    * `milestone` 是**根节点**：它引用同轮范围内的 turn/digest 记录（`refs`），
    * 自己不携带细节正文——细节本来就在 L3 里，里程碑只是把散落的细节组织成故事。
    * 因此它永不参与剪枝（见 {@link selectPrunable}）：剪掉根节点等于把故事拆散。
    *
-   * `tool` 是**细节池**：它的存活规则与其它 kind 完全分开（见 {@link selectPrunable}），
-   * 既不计入 `maxRecords`，也不产出任何入边——否则"细节"会反过来挤掉主内容。
+   * `tool` 与 `constraint` 都是**细节池**：存活规则与其它 kind 完全分开
+   * （见 {@link selectPrunable}），既不计入 `maxRecords`，也不产出任何入边——
+   * 否则"细节"会反过来挤掉主内容。
+   *
+   * 新增 `constraint` **不需要 bump `stateVersion`**：`projection.ts` 的
+   * `recordSchema.kind` 是 `z.string()`（不是枚举），状态里多一个 kind 值只是
+   * 多一行数据，schema 逐字段校验照样通过，旧库读进来也不会被拒。
    */
-  kind: 'digest' | 'turn' | 'artifact' | 'milestone' | 'tool'
+  kind: 'digest' | 'turn' | 'artifact' | 'milestone' | 'tool' | 'constraint'
   /** 写入时间（epoch ms）。 */
   createdAt: number
   /** 来源会话 id。 */
@@ -267,6 +273,49 @@ export interface ToolPruneLimits {
 }
 
 /**
+ * 约束记录（`kind === 'constraint'`）的独立条数上限。
+ *
+ * **为什么不与工具记录共用一套淘汰规则**：工具输出是"细节"，越新的越有用，所以
+ * 工具池按新近度滚动。约束是"规则"，越早的越重要——实测本项目 5 条致命约束
+ * （引擎互斥、不能让对话失败、路径纪律、绝不内联、patch name 可解析）**全部出现在
+ * turn 1**。按新近度淘汰会先丢掉它们，正好丢反。
+ *
+ * 所以约束池的保留规则是"约束强度优先"（见 {@link constraintStrength}），同强度
+ * 时才回落到时间——强约束在任何上限下都不会被挤掉。
+ */
+export interface ConstraintPruneLimits {
+  /** 整库最多几条约束记录（超出后淘汰强度最低、同强度里最新的）。 */
+  maxRecords: number
+  /** 每个会话最多几条约束记录（规则同上）。 */
+  maxPerSession: number
+}
+
+/**
+ * 强约束词表：只用来**排序剪枝优先级**，不决定"抽不抽"。
+ *
+ * 抽不抽由 `constraint-digest.ts` 的 `CONSTRAINT_WORDS` 决定（含"不要/避免"这类
+ * 弱词）；这里只数"这句话有多硬"：`绝不`/`必须`/`禁止`/`永远` 这类词出现得越多，
+ * 它越像一条项目铁律，越不该被上限挤掉。
+ *
+ * 刻意不含"只能/不能"之外的弱词：它们的出现频率高（实测"必须"219 次、"不能"92 次），
+ * 混进来会让强度分趋同，起不到区分作用。
+ */
+export const CONSTRAINT_STRONG_RE = /绝不|必须|禁止|永远|永不|严禁|切勿|不得/g
+
+/**
+ * 一条约束记录的"强度分"= 强约束词命中次数。
+ *
+ * 用命中次数而不是比例：长记录通常承载更多约束句（turn 1 实测 4,819 字符），
+ * 让它在任何上限下优先存活，正是本池子的目的。
+ *
+ * @param text - 记录正文。
+ * @returns 强度分（0 = 没有任何强约束词）。
+ */
+export function constraintStrength(text: string): number {
+  return (text.match(CONSTRAINT_STRONG_RE) ?? []).length
+}
+
+/**
  * 选出要淘汰的记录 id。
  *
  * 两条规则叠加：
@@ -289,8 +338,9 @@ export interface ToolPruneLimits {
  *
  * @param scored - {@link scoreRecords} 的输出。
  * @param minScore - 保留阈值。
- * @param maxRecords - 主内容池的记录上限（**不含**工具记录）。
+ * @param maxRecords - 主内容池的记录上限（**不含**工具/约束记录）。
  * @param toolLimits - 工具记录池的上限；缺省 = 不做工具池特殊处理。
+ * @param constraintLimits - 约束记录池的上限；缺省 = 不做约束池特殊处理。
  * @returns 要删除的 id 集合。
  */
 export function selectPrunable(
@@ -298,11 +348,21 @@ export function selectPrunable(
   minScore: number,
   maxRecords: number,
   toolLimits?: ToolPruneLimits,
+  constraintLimits?: ConstraintPruneLimits,
 ): Set<string> {
   const drop = new Set<string>()
-  // 主内容池：传了 toolLimits 时先把 tool 记录摘出去，让下面的分数/上限规则
+  // 主内容池：传了任一细节池上限时先把对应记录摘出去，让下面的分数/上限规则
   // 与"库里从来只有主内容"逐条等价。这是"不许挤占主内容"的落点。
-  const main = toolLimits === undefined ? scored : scored.filter((entry) => entry.record.kind !== 'tool')
+  //
+  // 注意约束池**只在自己被传了上限时**才摘出去：外部调用（旧脚本、旧单测）只传
+  // toolLimits 时，constraint 记录仍按普通记录处理，行为与扩展前一致。
+  const main = (toolLimits === undefined && constraintLimits === undefined)
+    ? scored
+    : scored.filter((entry) => {
+      if (toolLimits !== undefined && entry.record.kind === 'tool') return false
+      if (constraintLimits !== undefined && entry.record.kind === 'constraint') return false
+      return true
+    })
   const referenced = new Set<string>()
   for (const { record } of main) for (const ref of record.refs) referenced.add(ref)
 
@@ -349,6 +409,33 @@ export function selectPrunable(
       // 整库上限：仍然从最旧的开始丢。
       const overflow = kept.length - toolLimits.maxRecords
       if (overflow > 0) for (const entry of kept.slice(0, overflow)) drop.add(entry.record.id)
+    }
+  }
+
+  if (constraintLimits !== undefined) {
+    const constraints = scored.filter((entry) => entry.record.kind === 'constraint')
+    if (constraints.length > 0) {
+      // 先按"约束强度↓、轮号↑"排定优先级：强度高的先活；同强度时**更早的**先活
+      // （早期约束是项目奠基，晚期多半是一次性任务边界）。
+      const ordered = [...constraints].sort((a, b) =>
+        (constraintStrength(b.record.text) - constraintStrength(a.record.text))
+        || (a.record.turnFrom - b.record.turnFrom)
+        || a.record.id.localeCompare(b.record.id))
+      // 每会话只留优先级最高的 N 条。
+      const perSession = new Map<string, number>()
+      const keptBySession = new Set<string>()
+      for (const entry of ordered) {
+        const seen = perSession.get(entry.record.sessionId) ?? 0
+        if (seen < constraintLimits.maxPerSession) {
+          perSession.set(entry.record.sessionId, seen + 1)
+          keptBySession.add(entry.record.id)
+        }
+      }
+      for (const entry of constraints) if (!keptBySession.has(entry.record.id)) drop.add(entry.record.id)
+      // 整库上限：**丢掉优先级末尾的**（= 强度最低/最新的），而不是最旧的。
+      const kept = ordered.filter((entry) => keptBySession.has(entry.record.id))
+      const overflow = kept.length - constraintLimits.maxRecords
+      if (overflow > 0) for (const entry of kept.slice(overflow)) drop.add(entry.record.id)
     }
   }
   return drop
@@ -1136,6 +1223,7 @@ export class DeepMemoryStore {
    * @param maxRecords - 主内容池上限（不含工具记录）。
    * @param now - 当前时间（注入以便测试）。
    * @param toolLimits - 工具记录池上限；不传 = 工具记录按普通记录处理（旧行为）。
+   * @param constraintLimits - 约束记录池上限；不传 = 约束记录按普通记录处理（旧行为）。
    * @returns 剪枝统计。
    */
   prune(
@@ -1144,9 +1232,10 @@ export class DeepMemoryStore {
     maxRecords: number,
     now = Date.now(),
     toolLimits?: ToolPruneLimits,
+    constraintLimits?: ConstraintPruneLimits,
   ): PruneOutcome {
     const scored = scoreRecords(this.records, taskKeywords, now)
-    const drop = selectPrunable(scored, minScore, maxRecords, toolLimits)
+    const drop = selectPrunable(scored, minScore, maxRecords, toolLimits, constraintLimits)
     if (drop.size === 0) {
       return { before: this.records.length, after: this.records.length, removed: [], kept: this.records.map((r) => r.id) }
     }
@@ -1168,15 +1257,24 @@ export class DeepMemoryStore {
     tools: number
     /** 工具记录占用的 token。 */
     toolTokens: number
+    /** 约束记录条数（独立细节池，见 {@link ConstraintPruneLimits}）。 */
+    constraints: number
+    /** 约束记录占用的 token。 */
+    constraintTokens: number
   } {
     let tokens = 0
     let tools = 0
     let toolTokens = 0
+    let constraints = 0
+    let constraintTokens = 0
     for (const record of this.records) {
       tokens += record.tokens
       if (record.kind === 'tool') {
         tools += 1
         toolTokens += record.tokens
+      } else if (record.kind === 'constraint') {
+        constraints += 1
+        constraintTokens += record.tokens
       }
     }
     const times = this.records.map((r) => r.createdAt)
@@ -1188,6 +1286,8 @@ export class DeepMemoryStore {
       newest: times.length === 0 ? null : Math.max(...times),
       tools,
       toolTokens,
+      constraints,
+      constraintTokens,
     }
   }
 

@@ -28,13 +28,19 @@ import { buildStatus, detectTools, componentMatrix, engineOf, arbitrateEngine, M
 function renderRecord(record: MemoryRecord, index: number): string {
   const when = new Date(record.createdAt).toISOString()
   const isTool = record.kind === 'tool'
+  const isConstraint = record.kind === 'constraint'
   const heading = isTool
     ? `### [${index + 1}] ${record.id}  (tool · 工具原始输出 · turn ${record.turnFrom}–${record.turnTo} · **非结论**)`
-    : `### [${index + 1}] ${record.id}  (${record.kind}, turn ${record.turnFrom}–${record.turnTo})`
+    : isConstraint
+      ? `### [${index + 1}] ${record.id}  (constraint · 工具参数中的约束原话 · turn ${record.turnFrom}–${record.turnTo})`
+      : `### [${index + 1}] ${record.id}  (${record.kind}, turn ${record.turnFrom}–${record.turnTo})`
   const warning = isTool
     ? '> ⚠ 这是当时工具/命令的**原始输出摘录**，不是结论，也不是已验证的事实。'
       + '引用前请自行判断；记录里写明"其余未存"的部分确实没有落库，需要时重跑命令或查原始日志。'
-    : null
+    : isConstraint
+      ? '> ⚠ 这是当时**写进文件/说明里的约束原话**（从 `tool/call` 参数逐字摘出），不是我的总结。'
+        + '它证明"当时确实这样要求过"；要不要照做仍取决于当前任务，但**引用时请引原话**。'
+      : null
   return [
     heading,
     ...(warning === null ? [] : [warning]),
@@ -69,6 +75,9 @@ export interface MemoryRuntime {
     newest: number | null
     tools: number
     toolTokens: number
+    /** 约束细节池（`kind='constraint'`）；旧运行时可能没有这两个字段。 */
+    constraints?: number
+    constraintTokens?: number
   }
   /** 当前会话的 L2 摘要文本（无摘要时为 null）。 */
   digestText: (session: unknown) => string | null
@@ -134,6 +143,10 @@ export interface MemoryRuntime {
       toolCount: number
       /** 工具细节池 token。 */
       toolTokens: number
+      /** 约束细节池条数（独立上限，不计入 l3MaxRecords）。 */
+      constraintCount?: number
+      /** 约束细节池 token。 */
+      constraintTokens?: number
       sessionCount: number
       sessionTokens: number
       dir: string
@@ -504,6 +517,7 @@ export function buildVerifyTool(runtime: MemoryRuntime) {
             : `PASS  L3 深层记忆：后端 ${readings.l3.backend}，整库 ${readings.l3.libraryCount} 条 / 约 ${readings.l3.libraryTokens} tokens`
               + `（本会话 ${readings.l3.sessionCount} 条 / 约 ${readings.l3.sessionTokens} tokens）；`
               + `其中工具原始输出 ${readings.l3.toolCount} 条 / 约 ${readings.l3.toolTokens} tokens`
+              + `、约束原话 ${readings.l3.constraintCount ?? 0} 条 / 约 ${readings.l3.constraintTokens ?? 0} tokens`
               + '（独立细节池：不计入记录上限、不进注入、只可 recall）。')
           : 'SKIP  L3 深层记忆：已由配置关闭（l3.enabled=false）。',
       })

@@ -22,8 +22,8 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULTS, MEMORY_NAMESPACE, defaultStorageDir, resolveConfig } from './config-core.ts'
 import type { TriLayerConfig } from './config-core.ts'
-import { PROJECTION_HEADER, collectToolResults, contentToText, estimateTokens, messageBody, pendingWindowInput, projectWorkingWindow, renderWorkingMemory } from './l1-working.ts'
-import type { EventLike, ToolResultHit, TurnSpan } from './l1-working.ts'
+import { PROJECTION_HEADER, collectToolCalls, collectToolResults, contentToText, estimateTokens, messageBody, pendingWindowInput, projectWorkingWindow, renderWorkingMemory } from './l1-working.ts'
+import type { EventLike, ToolCallHit, ToolResultHit, TurnSpan } from './l1-working.ts'
 import { L2_TRUNCATION_NOTE, arbitrateInjection, fitMainline } from './budget.ts'
 import type { Arbitration, InjectionBlock, MainlineFit } from './budget.ts'
 import { buildDigest, callWithEffortRetry, extractiveDigest, renderShortTermMemory, resolveTarget } from './l2-short.ts'
@@ -31,6 +31,7 @@ import type { DigestAttempt, DigestFailure, DigestResult, LlmSeam } from './l2-s
 import { DeepMemoryStore, extractKeywords } from './l3-deep.ts'
 import type { MemoryRecord, PruneOutcome } from './l3-deep.ts'
 import { captureToolRecord } from './tool-digest.ts'
+import { captureConstraintRecord } from './constraint-digest.ts'
 import {
   CAUSE_INSTRUCTION,
   applyCauses,
@@ -114,6 +115,11 @@ async function loadSettingsSchema(): Promise<unknown | null> {
       l3ToolRecordChars: num(DEFAULTS.l3ToolRecordChars),
       l3ToolMaxPerSession: num(DEFAULTS.l3ToolMaxPerSession),
       l3ToolMaxRecords: num(DEFAULTS.l3ToolMaxRecords),
+      // 约束细节池的四个键同理：缺一个，面板保存就会把用户配的上限静默改回默认。
+      l3ConstraintDistill: bool(DEFAULTS.l3ConstraintDistill),
+      l3ConstraintRecordChars: num(DEFAULTS.l3ConstraintRecordChars),
+      l3ConstraintMaxPerSession: num(DEFAULTS.l3ConstraintMaxPerSession),
+      l3ConstraintMaxRecords: num(DEFAULTS.l3ConstraintMaxRecords),
       // 主线骨架的键也必须在 schema 里：设置服务在场时它接管配置来源，
       // 缺席的键会被 resolveConfig 当成"没配过"而回落到默认值——那样面板一保存，
       // 用户在组合行里配的骨架上限就被静默改回默认。
@@ -513,14 +519,22 @@ interface HostContext {
  * 注释）、`约 N tokens` 与后端名。`keywords` 参数仍保留——它是调用方的既有契约，
  * 而且剪枝后本函数不再消费它；保留形状是为了让"删掉的那一行"只删渲染、不删数据。
  *
- * @param stats - L3 库的统计（含工具池条数）。
+ * @param stats - L3 库的统计（含工具池/约束池条数）。
  * @param keywords - 当前任务链关键词（**已不参与渲染**，保留签名）。
  * @param recallName - 本插件 recall 工具的实际名字。
  * @param vaultNote - 另一个记忆库在场时的指引（无则为空串）。
  * @returns 注入文本。
  */
 export function renderDeepIndex(
-  stats: { count: number; tokens: number; backend: string | null; tools?: number; toolTokens?: number },
+  stats: {
+    count: number
+    tokens: number
+    backend: string | null
+    tools?: number
+    toolTokens?: number
+    constraints?: number
+    constraintTokens?: number
+  },
   keywords: readonly string[],
   recallName: string,
   vaultNote: string,
@@ -528,10 +542,11 @@ export function renderDeepIndex(
   void keywords
   const lines = ['## L3 深层记忆（Deep Memory）']
   const tools = stats.tools ?? 0
-  // 主内容口径单独报：工具池是独立预算，把它加进"已持久化 N 条"会让主内容的规模
-  // 读数随工具输出漂移，读者再也无法用这个数字判断"故事线有多大"。
-  const mainCount = Math.max(0, stats.count - tools)
-  if (mainCount === 0 && tools === 0) {
+  const constraints = stats.constraints ?? 0
+  // 主内容口径单独报：工具池/约束池是独立预算，把它们加进"已持久化 N 条"会让主内容
+  // 的规模读数随工具输出漂移，读者再也无法用这个数字判断"故事线有多大"。
+  const mainCount = Math.max(0, stats.count - tools - constraints)
+  if (mainCount === 0 && tools === 0 && constraints === 0) {
     lines.push(`- 库为空（后端 ${stats.backend ?? '未打开'}）。更早的内容尚未被蒸馏。`)
   } else {
     // 只报条数与"正文不在这里"。以下四项被删掉的理由（每一条都按"模型拿它做什么"
@@ -548,6 +563,12 @@ export function renderDeepIndex(
     if (tools > 0) {
       // 只给计数与一句"它不是结论"。内容一律不进注入——这是硬约束。
       lines.push(`- 另有工具原始输出 ${tools} 条（可 recall，均为原始输出、非结论）。`)
+    }
+    if (constraints > 0) {
+      // 约束池**必须单独报**：它是"人写下的规则原话"，不是工具输出。合并成一行会让
+      // 模型以为约束也是原始输出（两者的可信度完全不同）。这一行是整条功能唯一的
+      // 注入成本（实测 30 tokens 量级，见测试里的上界断言）。
+      lines.push(`- 另有工具参数中的约束原话 ${constraints} 条（可 recall，是当时的原话、非结论）。`)
     }
   }
   lines.push(`- 需要细节时调用 \`${recallName}\`（关键词或 id）取回。`)
@@ -757,6 +778,46 @@ function taskTitleOf(session: unknown, state: SessionState): string | undefined 
  *
  * @param input - 会话、状态、L1 窗口、L3 存储、配置与 recall 工具名。
  */
+/**
+ * 思维栏里一条 `constraint` 记录最多显示多少字符。
+ *
+ * 为什么是"截断"而不是"像 tool 记录一样整个不显示"：两者性质不同——tool 记录是
+ * 原始输出（噪音大、没有固定结构，几十条几千字符会把主线淹掉），而 constraint 是
+ * **人写下的规则原话**，短的几十字符、长的也就几千；面板正是"人核对记忆里有没有
+ * 那条铁律"的地方，藏起来等于让这个检查面失效。
+ *
+ * 但正文原样给也不行：实测本会话 turn 1 的一条约束记录 9,270 字符，40 条记录合计
+ * 5 万字符，面板会整屏都是它。所以只显示开头（足够认出"哪一轮、哪句规则"），
+ * 全文仍只在 L3，用 recall 按 id 取回——面板是检查面，不是阅读器。
+ */
+const PANEL_CONSTRAINT_CHARS = 300
+
+/** 面板标记：让读者知道这段不是全文，以及全文怎么拿。 */
+const PANEL_CONSTRAINT_TAIL = '\n…（面板只显示开头；全文用 recall 按 id 取回）'
+
+/**
+ * 把 L3 记录转成"思维栏可展示"的列表。
+ *
+ * 两条规则：`tool` 记录整个不进（原始输出会淹掉主线）；`constraint` 记录进，但
+ * 正文截到 {@link PANEL_CONSTRAINT_CHARS}。计数仍按整库报（`stats` 含两类细节），
+ * 记录列表只是展示面的裁剪——**不改存储，也不改 recall**。
+ *
+ * @param records - 库里的全部记录。
+ * @returns 面板用的记录列表。
+ */
+export function panelRecords(records: readonly MemoryRecord[]): readonly MemoryRecord[] {
+  const out: MemoryRecord[] = []
+  for (const record of records) {
+    if (record.kind === 'tool') continue
+    if (record.kind === 'constraint' && record.text.length > PANEL_CONSTRAINT_CHARS) {
+      out.push({ ...record, text: `${record.text.slice(0, PANEL_CONSTRAINT_CHARS)}${PANEL_CONSTRAINT_TAIL}` })
+      continue
+    }
+    out.push(record)
+  }
+  return out
+}
+
 function feedProjection(input: {
   projection: TriLayerProjection
   session: unknown
@@ -774,9 +835,9 @@ function feedProjection(input: {
   let records: readonly MemoryRecord[] = []
   try {
     stats = store.stats()
-    // 工具记录**不进思维栏**：面板是给人看的，几十条几千字符的原始输出会把主线
-    // 骨架与 turn 记录淹掉。计数仍按整库报（stats.count 含工具），记录列表不含。
-    records = store.all().filter((record) => record.kind !== 'tool')
+    // 展示面裁剪见 {@link panelRecords}：tool 记录整个不显示，constraint 只显示开头
+    // （全文用 recall）。存储与 recall 的语义不受影响。
+    records = panelRecords(store.all())
   } catch {
     // 读不到库只是 L3 段显示为空；L1/L2/骨架照常发布。
   }
@@ -1326,6 +1387,10 @@ export function apply(ctx: unknown, config: unknown = {}): void {
           // 这个数字随工具输出漂移。memory_state 要能分别回答两个问题。
           toolCount: stats.tools,
           toolTokens: stats.toolTokens,
+          // 约束池同理，单独报：它和工具池是两个独立上限，合并读会让"主内容多大"
+          // 同时被两类细节干扰。memory_state 是唯一能分别回答"约束存了多少"的出口。
+          constraintCount: stats.constraints,
+          constraintTokens: stats.constraintTokens,
           sessionCount,
           sessionTokens,
           dir,
@@ -1365,11 +1430,22 @@ export function apply(ctx: unknown, config: unknown = {}): void {
     },
     prune: (session): PruneOutcome => {
       const window = projectWorkingWindow(readEvents(session), settings.l1RetainTurns)
-      return store.prune(taskKeywords(window), settings.l3PruneMinScore, settings.l3MaxRecords, Date.now(), {
-        // 工具池**独立**于 l3MaxRecords：主内容池的上限与剪枝结果不因工具记录而改变。
-        maxRecords: settings.l3ToolMaxRecords,
-        maxPerSession: settings.l3ToolMaxPerSession,
-      })
+      return store.prune(
+        taskKeywords(window),
+        settings.l3PruneMinScore,
+        settings.l3MaxRecords,
+        Date.now(),
+        {
+          // 工具池**独立**于 l3MaxRecords：主内容池的上限与剪枝结果不因工具记录而改变。
+          maxRecords: settings.l3ToolMaxRecords,
+          maxPerSession: settings.l3ToolMaxPerSession,
+        },
+        {
+          // 约束池同样独立，但保留规则不同：按约束强度保留（早期铁律不会被新记录挤掉）。
+          maxRecords: settings.l3ConstraintMaxRecords,
+          maxPerSession: settings.l3ConstraintMaxPerSession,
+        },
+      )
     },
     dedupe: (input) => {
       // 宁可明确报错，也不要返回"removed: 0"——那会被读成"库是干净的"。
@@ -1436,8 +1512,8 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       let records: readonly MemoryRecord[] = []
       try {
         stats = store.stats()
-        // 与 feedProjection 同口径：工具记录是 recall 专用细节，不进思维栏。
-        records = store.all().filter((record) => record.kind !== 'tool')
+        // 与 feedProjection 同口径：tool 记录不进面板，constraint 只显示开头。
+        records = panelRecords(store.all())
       } catch {
         // 读不到库只是 L3 段为空，L1/骨架照常发布。
       }
@@ -1971,6 +2047,60 @@ async function refreshDigest(input: {
           // 与 L2 摘要（外层 catch 会把整个投影一起丢掉）。但也绝不能静默——桌面端
           // 宿主日志不可见，所以这里至少留一条 warn。
           context.logger.warn('[dsh-tri-layer-memory] 工具记录落库失败（跳过该轮，主内容不受影响）：%s',
+            error instanceof Error ? error.message : String(error))
+        }
+      }
+    }
+    // ── 约束细节池：读 `tool/call` 参数，与工具输出池**完全独立** ──────────
+    //
+    // 为什么必须单独走一条路：`tool/result` 只承载"工具做了什么"，而"不许做什么"
+    // 的原文大多写在 `tool/call.arguments` 里（README 章节、源码注释、测试名）。
+    // 实测 10 条硬约束里 5 条的原文只存在于这里，turn 记录（原料是 user/assistant
+    // 文本）与 tool 记录（原料是 tool/result）都救不回。这是最后一个结构性盲区。
+    //
+    // 幂等按"该轮有没有 constraint 记录"判断（而不是复用工具池的 existingTurns）：
+    // 两个池子可以分别被关掉/打开，共用一份判等会让关掉一个池子时另一个池子
+    // 静默跳过整轮。同轮多次 `tool/call` 在一次扫描里全部收集、合并成一条记录，
+    // 所以"同轮多次调用"不是幂等的例外。
+    const constraintEnabled = settings.l3ConstraintDistill && settings.l3Enabled && storeReady
+    if (constraintEnabled && overflowSpans.length > 0) {
+      const existingTurns = new Set<number>()
+      for (const record of store.all()) {
+        if (record.kind === 'constraint' && record.sessionId === sessionId) existingTurns.add(record.turnFrom)
+      }
+      const wanted = new Set<number>()
+      for (const span of overflowSpans) {
+        if (existingTurns.has(span.turn)) continue
+        if (wanted.size + existingTurns.size >= settings.l3ConstraintMaxPerSession) break
+        wanted.add(span.turn)
+      }
+      const callsByTurn = new Map<number, ToolCallHit[]>()
+      if (wanted.size > 0) {
+        for (const call of collectToolCalls(readEvents(session), (turn) => wanted.has(turn))) {
+          const list = callsByTurn.get(call.turn) ?? []
+          list.push(call)
+          callsByTurn.set(call.turn, list)
+        }
+      }
+      for (const span of overflowSpans) {
+        const calls = callsByTurn.get(span.turn)
+        if (calls === undefined) continue
+        try {
+          captureConstraintRecord({
+            store,
+            sessionId,
+            turn: span.turn,
+            calls,
+            settings: {
+              enabled: settings.l3ConstraintDistill,
+              maxChars: settings.l3ConstraintRecordChars,
+              maxPerSession: settings.l3ConstraintMaxPerSession,
+              maxRecords: settings.l3ConstraintMaxRecords,
+            },
+          })
+        } catch (error: unknown) {
+          // 与工具池同一条纪律：可降级、不能拖垮主内容蒸馏，但绝不静默。
+          context.logger.warn('[dsh-tri-layer-memory] 约束记录落库失败（跳过该轮，主内容不受影响）：%s',
             error instanceof Error ? error.message : String(error))
         }
       }
