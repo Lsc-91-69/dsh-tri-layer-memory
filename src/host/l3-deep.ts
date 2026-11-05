@@ -841,6 +841,40 @@ export class DeepMemoryStore {
   }
 
   /**
+   * 批量就地更新：一次内存改动、**一次**落盘。
+   *
+   * 为什么需要它：`update()` 每改一条就整表重写一次（JSONL 追加写的约束，见下）。
+   * 给历史 turn 记录补"未剪约束"时要改上百条，逐条 update 会变成上百次全表重写，
+   * 在一个 pre-step 里做这件事等于卡住对话。批量版把所有改动先在内存里做完，
+   * 最后只 `replace` 一次。
+   *
+   * @param patches - 要改的记录与字段；id 不存在或文本未变的条目会被跳过。
+   * @returns { updated, unchanged }：实际改写条数与"已是最新"的条数。
+   */
+  updateMany(patches: ReadonlyArray<{ id: string; text: string; tokens?: number }>): { updated: number; unchanged: number } {
+    let updated = 0
+    let unchanged = 0
+    for (const patch of patches) {
+      const record = this.records.find((r) => r.id === patch.id)
+      if (record === undefined || record.text === patch.text) {
+        unchanged += 1
+        continue
+      }
+      record.text = patch.text
+      record.keywords = extractKeywords(patch.text)
+      record.tokens = typeof patch.tokens === 'number' && Number.isFinite(patch.tokens)
+        ? Math.max(0, Math.trunc(patch.tokens))
+        : estimateTokens(patch.text)
+      updated += 1
+    }
+    if (updated > 0) {
+      this.dfCache = null
+      this.backend?.replace(this.records)
+    }
+    return { updated, unchanged }
+  }
+
+  /**
    * 检索：委托给纯函数 {@link rankRecords}/{@link searchRecords}，并在这里维护 df 缓存。
    *
    * 为什么缓存按"查询词"增量建、而不是预建全库词表：预建表在每次 `put` 后就要整表

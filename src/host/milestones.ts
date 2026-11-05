@@ -1466,6 +1466,92 @@ const PURE_REPLY = /^(可以|好|行|嗯|哦|收到|明白|ok|OK)[，,。！!、
 /** 纯指代指令：只有动作与指代，没有对象。 */
 const PURE_ORDER = /^(先做|继续|开始|按|做|处理|看)[\s\S]{0,12}$/
 
+/**
+ * 任务边界判据：标题或 cause 里出现这些词，说明这一行是**约束/排除/边界**，
+ * 而不是过程叙述。
+ *
+ * 为什么展示分层时必须把它单拎出来（这是"剪枝可以有损展示、不能有损存储"之外
+ * 的第二条约束：**任务边界不能缺失**）：分层按"最近的"裁剪时，最早的那批里程碑
+ * 恰好是**任务边界最密集**的地方——用户在第 28–33 轮定的原则（主内容不遗忘、
+ * 细节按需取回、避免三个风险），到第 131 轮仍然有效，但它们的位置最旧、最先被裁。
+ * 只按时间裁，等于把最持久的约束第一个丢掉。
+ *
+ * 刻意**不**收窄到单字 `限`：`预算无限` 会被误判成边界（实测命中）。边界词必须
+ * 是能独立表达约束的短语。
+ */
+const BOUNDARY_PATTERN = /必须|不能|只能|禁止|严禁|前提|除非|不得|务必|绝对|不许|不可以|不要|别再|别(?=[让把用发写说弄做])|避免|排除|约束|边界|仅限|只做|只保留|关掉|关闭|禁用|移除|撤掉|不做/
+
+/**
+ * 一条里程碑是否承载任务边界（约束 / 排除 / 明确的方向否决）。
+ *
+ * 只读 title/cause——detail 是原文，不在注入路径上（L3 里已有），读它会让这个判据
+ * 依赖"剪枝后本不该再看的字段"。
+ *
+ * @param milestone - 一条里程碑。
+ * @returns 是边界类时为 true。
+ */
+export function isBoundaryMilestone(milestone: Milestone): boolean {
+  return BOUNDARY_PATTERN.test(`${milestone.title} ${milestone.cause}`)
+}
+
+/**
+ * 一段文本是否含任务边界（约束 / 排除 / 边界）表述。
+ *
+ * 与 {@link isBoundaryMilestone} 共用同一份词表，但输入是任意文本——L3 蒸馏时用它
+ * 判断"用户原话里哪些句子必须逐字留下"。
+ *
+ * @param text - 任意文本（通常是一句用户原话）。
+ * @returns 命中边界词时为 true。
+ */
+export function isBoundaryText(text: string): boolean {
+  return BOUNDARY_PATTERN.test(text)
+}
+
+/**
+ * 把用户原话里的**约束/排除句逐字**附到 L3 turn 记录末尾。
+ *
+ * 为什么必须补这一步：`extractiveDigest(..., { layered: true })` 是按类别预算抽的，
+ * 每类只留几条；真实会话实测有 **一半左右** 的约束句在蒸馏后于 L3 里找不到任何片段
+ * （344 句测 170 句存在）。它们在 L1 窗口里还在时看不出问题，一旦溢出就永久消失——
+ * 这正是"存储也有损"。用户的原则是展示可以有损、存储不能有损，所以这里做的是
+ * **只加不减**：正文照旧，末尾追加一段未剪的约束原话。
+ *
+ * 只留用户原话（不是助手转述）：约束是用户下的，助手复述可能已经变形。每轮最多
+ * `maxClauses` 条、单条 ≤200 字，避免一条超长粘贴把记录撑成几 MB；这个上限是
+ * **存储上限**，不影响注入（turn 记录从不进注入）。
+ *
+ * 去重按句子：同一句在用户消息里重复出现（粘贴两次）只留一条。
+ *
+ * @param base - 原蒸馏正文。
+ * @param userText - 本轮用户消息原文（`TurnSpan.userText`）。
+ * @param maxClauses - 最多追加多少条约束句（默认 16）。
+ * @returns 追加后的正文；没有约束句时原样返回。
+ */
+export function withBoundaryClauses(base: string, userText: readonly string[], maxClauses = 32): string {
+  // 幂等：已补过就原样返回，避免批量补写时把同一段再追加一遍。
+  if (base.includes('## 用户原话·约束（未剪）')) return base
+  const clauses: string[] = []
+  const seen = new Set<string>()
+  for (const raw of userText) {
+    for (const piece of raw.split(/[\n。；;！!？?]+/)) {
+      const text = piece.trim()
+      // 上限 400 而不是 200：约束常常写成"前提 + 怎么做 + 别怎么做"的一长句，200 会把
+      // 后半句（通常是排除条件本身）切掉。存储侧的预算远没紧到这个量级。
+      if (text.length < 8 || text.length > 400) continue
+      // 跳过 markdown 结构行（标题/列表/引用）：它们是粘贴报告的骨架，不是用户约束。
+      if (/^[#>*|-]|^\d+[.、)]/.test(text)) continue
+      if (!isBoundaryText(text)) continue
+      if (seen.has(text)) continue
+      seen.add(text)
+      clauses.push(text)
+      if (clauses.length >= maxClauses) break
+    }
+    if (clauses.length >= maxClauses) break
+  }
+  if (clauses.length === 0) return base
+  return `${base}\n\n## 用户原话·约束（未剪）\n${clauses.map((clause) => `- ${clause}`).join('\n')}`
+}
+
 /** 注入路径上一条里程碑的处置方式。 */
 export type MainlineTrim = 'keep' | 'strip-cause' | 'drop'
 
@@ -1596,16 +1682,45 @@ export function pruneMainlineForInjection(milestones: readonly Milestone[]): Mai
 }
 
 /**
+ * 注入骨架末尾的"更早主线在 L3"提示。
+ *
+ * 为什么必须有这一行：展示分层把更早的里程碑移出注入后，模型失去的不只是内容，
+ * 还有**"那些内容存在过"这件事本身**——它不会去取一个自己不知道存在的东西。
+ * 这一行把"可恢复"从存储事实变成可行动的知识：轮次范围可用「第 N 轮」直接命中
+ * （实测 top-1），也给了关键词检索一个入口。
+ *
+ * 文案里不写"已存入 L3"以外的任何承诺：`stored` 为 false 时**不**说已存储——
+ * 那会变成一句看起来合理、实际撒谎的提示（存储未就绪时模型会白查一次）。
+ */
+export interface EarlierMainlineNote {
+  /** 被移出注入的条数。 */
+  count: number
+  /** 其中最早的轮号。 */
+  from: number
+  /** 其中最晚的轮号（跨轮条目取结束轮）。 */
+  to: number
+  /** 这些条目是否**确认**都已落在 L3（false 时只提示"未展开"，不承诺可 recall）。 */
+  stored: boolean
+  /** recall 工具的实际名字（可能被改成 tri_recall）。 */
+  recallName: string
+}
+
+/**
  * 渲染注入用骨架：块头 + 任务标题 + 已剪枝的行（重新编号）。
  *
  * 与 {@link renderMainline} 的分工：那个是**全量**渲染（思维栏/审计/可行性脚本），
  * 这个是**注入**渲染（模型每一轮真的要付 token 的那份）。
  *
- * @param milestones - 已剪枝的行（{@link pruneMainlineForInjection} 的输出）。
+ * @param lines - 已剪枝且已按展示分层选过的行（{@link pruneMainlineForInjection} 的输出）。
  * @param taskTitle - 会话任务标题。
+ * @param earlier - 被移出注入的旧主线摘要；不给时不渲染这一行。
  * @returns 注入文本。
  */
-export function renderPrunedMainline(lines: readonly PrunedMainlineLine[], taskTitle?: string): string {
+export function renderPrunedMainline(
+  lines: readonly PrunedMainlineLine[],
+  taskTitle?: string,
+  earlier?: EarlierMainlineNote,
+): string {
   const out: string[] = ['## 里程碑主线骨架（Milestone Mainline）']
   const title = taskTitle === undefined ? '' : norm(taskTitle)
   if (title.length > 0) out.push(`- 任务：${clip(title, TITLE_MAX)}`)
@@ -1614,6 +1729,14 @@ export function renderPrunedMainline(lines: readonly PrunedMainlineLine[], taskT
     return out.join('\n')
   }
   out.push(...lines.map((line, index) => `${String(index + 1).padStart(3)}. ${line.text}`))
+  if (earlier !== undefined && earlier.count > 0) {
+    // 跨度只有一轮时不写 `第 5–5 轮`，那种写法读起来像笔误。
+    const span = earlier.from === earlier.to ? `第 ${earlier.from} 轮` : `第 ${earlier.from}–${earlier.to} 轮`
+    out.push(earlier.stored
+      ? `- 更早 ${earlier.count} 条主线（${span}）未在此展开，已存入 L3：`
+        + `用 \`${earlier.recallName}\` 按「第 N 轮」或关键词取回。`
+      : `- 更早 ${earlier.count} 条主线（${span}）未在此展开（本轮 L3 存储未就绪，暂不可 recall）。`)
+  }
   return out.join('\n')
 }
 

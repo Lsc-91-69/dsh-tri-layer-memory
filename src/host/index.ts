@@ -25,7 +25,7 @@ import type { TriLayerConfig } from './config-core.ts'
 import { PROJECTION_HEADER, collectToolResults, contentToText, estimateTokens, messageBody, pendingWindowInput, projectWorkingWindow, renderWorkingMemory } from './l1-working.ts'
 import type { EventLike, ToolResultHit, TurnSpan } from './l1-working.ts'
 import { L2_TRUNCATION_NOTE, arbitrateInjection, fitMainline } from './budget.ts'
-import type { Arbitration, InjectionBlock } from './budget.ts'
+import type { Arbitration, InjectionBlock, MainlineFit } from './budget.ts'
 import { buildDigest, callWithEffortRetry, extractiveDigest, renderShortTermMemory, resolveTarget } from './l2-short.ts'
 import type { DigestAttempt, DigestFailure, DigestResult, LlmSeam } from './l2-short.ts'
 import { DeepMemoryStore, extractKeywords } from './l3-deep.ts'
@@ -37,10 +37,11 @@ import {
   attachCauses,
   causeCacheKey,
   extractMilestones,
-  milestoneKey,
+  isTemplateCause,
   missingCauses,
   parseCauseReply,
   renderCauseRequest,
+  withBoundaryClauses,
 } from './milestones.ts'
 import type { Milestone } from './milestones.ts'
 import { buildDedupeTool, buildRecallTool, buildStateTool, buildVerifyTool } from './recall.ts'
@@ -242,6 +243,29 @@ interface SessionState {
    * 贴回去，否则骨架会退回确定性标签，与 L3 里那份（已经回填过的）永久分叉。
    */
   mainlineCauses: Map<string, string>
+  /**
+   * 本会话**确认已落库**的里程碑键（{@link causeCacheKey}：轮次区间 + 标题）。
+   *
+   * 为什么要有它：展示分层会把更早的主线移出注入，并在骨架末尾写一行
+   * "已存入 L3，用 recall 取回"。那句提示是**给模型的行动指令**，如果写入失败
+   * （store 未就绪、后端抛错）却照常出现，模型会去查一个不存在的记录——比不提示更糟。
+   * 所以提示行必须按这份集合逐条核对，不能按"应该写过"来写。
+   */
+  mainlineStored: Set<string>
+  /**
+   * 里程碑键 → L3 记录 id。
+   *
+   * 存在的理由：cause 回填后要把新正文写回**同一条**记录。旧实现靠"轮次区间先到先得"
+   * 反查，同轮多条时只能改到第一条；有了这张表，每条里程碑都能精确改自己那条。
+   */
+  mainlineRecordIds: Map<string, string>
+  /**
+   * 是否已经给历史 turn 记录补过"未剪约束"段（每会话一次）。
+   *
+   * 为什么需要这个一次性开关：批量补写要把上百条记录重写一遍（虽然 `updateMany`
+   * 只落盘一次），不该每个 pre-step 都试一遍。补写失败会保持 false，下一轮重试。
+   */
+  boundaryBackfillDone: boolean
   /**
    * 上次 L2 摘要**本该走模型却退回抽取式**的原因（成功或配置为 extractive 时为 null）。
    *
@@ -1128,6 +1152,65 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       })
   }
 
+  /**
+   * 全量骨架快照：`<sessionId>.mainline.json`。
+   *
+   * **为什么要有这个文件**：注入里的骨架是**展示产物**——信息量剪枝删行、条数上限
+   * 裁掉旧行、cause 被剥掉。用户的原则是"展示可以有损、存储不能有损"，而 L3 里
+   * 存的是**一条一条的 milestone 记录**（可 recall，但不好人读"这一轮的主体是什么"）。
+   * 快照把**未剪枝的完整骨架**整份留在本地，附上三份剪枝清单（被整条删的、被剥
+   * cause 的、被移出注入的）与每条是否确认落库，供人工/工具复查。
+   *
+   * 它绝不进注入（不在任何 read/注入路径上），也不参与任何决策——只写不读。
+   * 内容不变就不重写：每轮 pre-step 都会走到这里，无条件写盘等于用几 KB 的同步 IO
+   * 换一个没人看的文件。
+   */
+  let lastMainlineSnapshot = ''
+  const writeMainlineSnapshot = (input: { sessionId: string; state: SessionState; fit: MainlineFit }): void => {
+    try {
+      const { sessionId, state, fit } = input
+      const brief = (m: Milestone): Record<string, unknown> => ({
+        turn: m.turn,
+        turnTo: m.turnTo ?? m.turn,
+        title: m.title,
+        cause: m.cause,
+        category: m.category,
+        tokens: m.tokens,
+        stored: state.mainlineStored.has(causeCacheKey(m)),
+      })
+      const snapshot = {
+        schema: 1,
+        sessionId,
+        updatedAt: new Date().toISOString(),
+        note: '注入会剪枝（展示有损）；这里是未剪枝的全量骨架 + 剪枝清单（存储无损）。'
+          + '更早的条目在 L3 的 milestone 记录里，可用 memory_recall 按「第 N 轮」取回。',
+        totals: {
+          milestones: state.mainline.length,
+          injected: fit.kept,
+          dropped: fit.dropped,
+          infoPruned: fit.infoPruned,
+          causeStripped: fit.causeStripped,
+          boundaryKept: fit.boundaryKept,
+          earlier: fit.earlier.length,
+          stored: state.mainline.length === 0
+            ? 0
+            : state.mainline.filter((m) => state.mainlineStored.has(causeCacheKey(m))).length,
+        },
+        milestones: state.mainline.map((m) => ({ ...brief(m), line: milestoneLine(m) })),
+        earlier: fit.earlier.map(brief),
+        infoDropped: fit.infoDropped.map(brief),
+        causeStripped: fit.causeStrippedList.map(brief),
+      }
+      const text = JSON.stringify(snapshot, null, 2) + '\n'
+      if (text === lastMainlineSnapshot) return
+      lastMainlineSnapshot = text
+      const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80) || 'unknown'
+      writeFileSync(join(dir, `${safe}.mainline.json`), text)
+    } catch {
+      // 快照只是给人和工具复查的旁路；它失败不能影响注入，更不能拖垮这一轮。
+    }
+  }
+
   const sessions = new WeakMap<object, SessionState>()
   const stateOf = (session: unknown): SessionState => {
     const key = (typeof session === 'object' && session !== null ? session : {}) as object
@@ -1144,6 +1227,9 @@ export function apply(ctx: unknown, config: unknown = {}): void {
         mainlineWaterMark: -1,
         mainline: [],
         mainlineCauses: new Map(),
+        mainlineStored: new Set(),
+        mainlineRecordIds: new Map(),
+        boundaryBackfillDone: false,
         l2Failure: null,
         l2Attempt: null,
         llmSource: 'none',
@@ -1666,8 +1752,17 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       // 骨架**不进仲裁**：它单独渲染、单独限额（理由见 budget.ts 的 fitMainline），
       // 位置固定在 L1 之后、L2 之前——先声明"哪一段是可信原文"，再给整条主线，
       // 然后才是滚动摘要与 L3 索引。
+      //
+      // `earlierStored` 逐条核对而不是按配置猜：展示分层会在骨架末尾写一行
+      // "更早 N 条已存入 L3，用 recall 取回"。只有**当前这份骨架里每一条**都确认
+      // 落库（`state.mainlineStored` 由 refreshMainline 写入成功后才填），那行提示
+      // 才不会把模型引向一个不存在的记录。
       const mainline = settings.mainlineEnabled && settings.mainlineInject
-        ? fitMainline(state.mainline, taskTitle, settings.mainlineMaxTokens, settings.mainlineMaxMilestones)
+        ? fitMainline(state.mainline, taskTitle, settings.mainlineMaxTokens, settings.mainlineMaxMilestones, {
+          earlierStored: state.mainline.length > 0
+            && state.mainline.every((milestone) => state.mainlineStored.has(causeCacheKey(milestone))),
+          recallName: recallTool.name,
+        })
         : null
       const blocks = arbitration.kept.map((block) => block.text)
       if (mainline !== null) {
@@ -1718,6 +1813,10 @@ export function apply(ctx: unknown, config: unknown = {}): void {
       // 两次写各保住一半事实：第一次保失败原因，第二次补注入读数。代价只是一次
       // 几 KB 的同步写（每轮最多两次），比丢掉任一半都便宜。
       writeDiagnostics(state, sessionIdOf(session))
+      // 全量骨架快照（未剪枝）+ 剪枝清单：展示层可以省，本地必须留一份完整的。
+      if (mainline !== null) {
+        writeMainlineSnapshot({ sessionId: sessionIdOf(session), state, fit: mainline })
+      }
 
       return {
         ...decision,
@@ -1886,10 +1985,64 @@ async function refreshDigest(input: {
         // 分层抽取（约束/排除/失败/推断按类型各自留预算），**只用于 L3 turn 记录**：
         // 它不进注入，成本只有磁盘与剪枝频率。L2 摘要的回退路径仍用默认的 160 字
         // 抽取（那里的正文每轮都要注入），两条路径分开定价，见 l2-render.ts。
-        text: extractiveDigest([span], { layered: true }),
+        //
+        // 末尾再用 withBoundaryClauses 附上**未剪的约束原话**：分类预算是有限的，
+        // 实测约一半约束句在 L3 里找不到片段；存储可以大、注入必须小，所以在这里
+        // 保底而不是放宽蒸馏预算（后者会连带抬高 recall 的默认返回量）。
+        text: withBoundaryClauses(extractiveDigest([span], { layered: true }), span.userText),
         refs: [],
       })
       state.l3HighWaterTurn = Math.max(state.l3HighWaterTurn, span.turn)
+    }
+
+    // ── 历史 turn 记录的"未剪约束"补写（每会话一次，批量落盘）─────────────
+    //
+    // 两件事都在这里做，因为它们都属于"存量存储有损"：
+    // 1. **缺记录**：实测 131 轮里只有 99 条 turn 记录（旧版本去重/剪枝留下的空洞，
+    //    第 100/107/110 轮整轮没有记录）。只补水位线以内、确实该蒸馏过的轮次，
+    //    绝不动还在 L1/L2 窗口里的新轮——那会和高水位写入路径打架、制造重复。
+    // 2. **缺约束原话**：存量的 turn 记录是旧实现写的，末尾没有约束段。
+    //
+    // 用 `updateMany`/一次 put 批量落盘：逐条 `update` 会变成上百次全表重写，卡住这一轮
+    // 对话。上限（300 条 / 12 万字符）是给超长会话的保护：补不完的下一轮继续。
+    if (!state.boundaryBackfillDone) {
+      const turnRecords = new Map<number, MemoryRecord>()
+      for (const record of store.all()) {
+        if (record.kind === 'turn' && record.sessionId === sessionId) turnRecords.set(record.turnTo, record)
+      }
+      const patches: Array<{ id: string; text: string; tokens: number }> = []
+      let addedChars = 0
+      let created = 0
+      for (const span of evicted) {
+        if (patches.length + created >= 300 || addedChars >= 120_000) break
+        const record = turnRecords.get(span.turn)
+        if (record === undefined) {
+          // 只补"按水位本该已经蒸馏过"的轮；新轮由正常写入路径负责，避免形成重复。
+          if (span.turn > state.l3HighWaterTurn) continue
+          const text = withBoundaryClauses(extractiveDigest([span], { layered: true }), span.userText)
+          store.put({ kind: 'turn', sessionId, turnFrom: span.turn, turnTo: span.turn, text, refs: [] })
+          created += 1
+          continue
+        }
+        const text = withBoundaryClauses(record.text, span.userText)
+        if (text === record.text) continue
+        addedChars += text.length - record.text.length
+        patches.push({ id: record.id, text, tokens: estimateTokens(text) })
+      }
+      if (patches.length === 0 && created === 0) {
+        state.boundaryBackfillDone = true
+      } else {
+        try {
+          const { updated: filled } = patches.length === 0 ? { updated: 0 } : store.updateMany(patches)
+          state.boundaryBackfillDone = true
+          context.logger.info('[dsh-tri-layer-memory] 历史 turn 记录补写：改 %d 条 / 新建 %d 条（+%d 字符）',
+            filled, created, addedChars)
+        } catch (error: unknown) {
+          // 补写失败保持 false，下一轮重试；它只是存储增强，不能拖垮摘要与注入。
+          context.logger.warn('[dsh-tri-layer-memory] 历史 turn 记录补写失败（下一轮重试）：%s',
+            error instanceof Error ? error.message : String(error))
+        }
+      }
     }
   }
 
@@ -1992,10 +2145,24 @@ async function refreshDigest(input: {
  * @returns 骨架行文本。
  */
 function milestoneLine(milestone: Milestone): string {
-  const span = milestone.turnTo === undefined || milestone.turnTo === milestone.turn
-    ? `第 ${milestone.turn} 轮`
-    : `第 ${milestone.turn}–${milestone.turnTo} 轮`
-  return `${span}: ${milestone.title} — ${milestone.cause}`
+  return renderMilestoneLine(milestone.turn, milestone.turnTo ?? milestone.turn, milestone.title, milestone.cause)
+}
+
+/**
+ * 按骨架行口径渲染一条（轮次 + 标题 + cause）。
+ *
+ * 抽出来的理由：落库路径要渲染**接回来的旧 cause**（而不是 milestone 上那个模板标签），
+ * 两处必须同形，否则 `tokens` 与实际占用的差会再出现一次。
+ *
+ * @param turn - 起始轮。
+ * @param turnTo - 结束轮（等于 turn 时为单轮）。
+ * @param title - 标题。
+ * @param cause - 原因从句。
+ * @returns 骨架行文本。
+ */
+function renderMilestoneLine(turn: number, turnTo: number, title: string, cause: string): string {
+  const span = turnTo === turn ? `第 ${turn} 轮` : `第 ${turn}–${turnTo} 轮`
+  return `${span}: ${title} — ${cause}`
 }
 
 /**
@@ -2029,6 +2196,8 @@ function refreshMainline(input: {
     state.mainlineWaterMark = -1
     // cause 缓存同样清掉：它键在轮次区间上，留着只会在重开后贴出一份过期因果。
     state.mainlineCauses.clear()
+    state.mainlineStored.clear()
+    state.mainlineRecordIds.clear()
     return false
   }
 
@@ -2039,35 +2208,184 @@ function refreshMainline(input: {
   // 提取产出的是全新对象：把已经补到的 cause 贴回去，否则水位一变因果就全丢回确定性
   // 标签，而 L3 里那份（唯一持久化的版本）已经改过——同一个会话会有两份不同的骨架。
   attachCauses(state.mainline, state.mainlineCauses)
-  if (!settings.l3Enabled || !storeReady) return true
+  if (!settings.l3Enabled || !storeReady) {
+    // 存储不在场时清空"已落库"集合：提示行据此退化成"暂不可 recall"，不撒谎。
+    state.mainlineStored.clear()
+    state.mainlineRecordIds.clear()
+    return true
+  }
 
   const sessionId = sessionIdOf(session)
-  // 去重按 (turnFrom, turnTo)：同一轮区间只留一个根节点，重复提取不会重复落库。
-  // 会话 id 也参与判断——L3 是跨会话共享的一个库，别的会话的第 3 轮不是本会话的第 3 轮。
-  const seen = new Set(store.all()
-    .filter((record) => record.kind === 'milestone' && record.sessionId === sessionId)
-    .map((record) => `${record.turnFrom}:${record.turnTo}`))
+  // ── 落库：按**位置**认领，而不是按轮次区间去重 ──────────────────────────
+  //
+  // 旧实现只用 `turn:turnTo` 去重。那假设"一轮最多一条里程碑"，而提取器实际会
+  // 在同一轮产出多条（第 1 轮的「任务 + 逐轮事件」、第 55 轮的「用户追问 + 压缩」）。
+  // 后果是：**第二条及以后从未写入 L3**——它们在注入里看得见、被裁剪后却 recall 不到，
+  // 正是"展示有损、存储也有损"。审计实测 90 条骨架里有 7 条处于这个状态。
+  //
+  // 新规则见 {@link persistMainlineRecords}：同一区间内，第 i 条里程碑认领第 i 条
+  // 未被认领的旧记录——正文相同则跳过，不同则 `update` 就地刷新，没有则新建。
+  const persisted = persistMainlineRecords({
+    store,
+    sessionId,
+    milestones: state.mainline,
+    backfilledCauses: new Set(state.mainlineCauses.keys()),
+  })
+  state.mainlineStored = persisted.stored
+  state.mainlineRecordIds = persisted.recordIds
+  // 把从 L3 旧记录里接回来的因果贴回内存：否则重启后第一次提取会用确定性标签渲染，
+  // 而 L3 里是更具体的那份——同一会话两份骨架又分叉了。
+  if (persisted.recovered.size > 0) {
+    for (const [key, cause] of persisted.recovered) state.mainlineCauses.set(key, cause)
+    attachCauses(state.mainline, state.mainlineCauses)
+  }
+  return true
+}
+
+/** {@link persistMainlineRecords} 的结果。 */
+export interface MainlinePersistResult {
+  /** 确认已落库的里程碑键（{@link causeCacheKey}）。 */
+  stored: Set<string>
+  /** 键 → 记录 id（cause 回填按它精确回写）。 */
+  recordIds: Map<string, string>
+  /** 本次新建 / 就地刷新的记录数（诊断用）。 */
+  created: number
+  updated: number
+  /**
+   * 从旧记录里**接回来**的因果（键 → cause）。
+   *
+   * 为什么需要它：cause 回填的缓存 `mainlineCauses` 只活在进程内存里，重启后是空的。
+   * 如果落库时就地刷新正文，等于把 L3 里那份已经补好的 "为什么" 用确定性标签
+   * （`原因不明`/`当轮测试通过`）覆盖掉——每重启一次就丢一层信息。这条路径让
+   * "刷新"变成"以旧记录里更具体的那份为准"，既修了旧版本残留，又不做降级。
+   */
+  recovered: Map<string, string>
+}
+
+/**
+ * 解析一条里程碑正文，拆出标题与 cause（纯函数，容错）。
+ *
+ * @param text - `第 N 轮[–M 轮]: 标题[ — 原因]`。
+ * @returns 标题与原因；不是里程碑形态时返回 null。
+ */
+export function parseMilestoneLine(text: string): { title: string; cause: string } | null {
+  const head = /^第 \d+(?:–\d+)? 轮: /.exec(text)
+  if (head === null) return null
+  const rest = text.slice(head[0].length)
+  const at = rest.indexOf(' — ')
+  if (at < 0) return { title: rest, cause: '' }
+  return { title: rest.slice(0, at), cause: rest.slice(at + 3) }
+}
+
+/**
+ * 把一批里程碑写成 L3 记录，并返回"哪些确认已落库"。
+ *
+ * **为什么按位置认领而不是按轮次区间去重**：一轮可能产出多条里程碑（「任务」与
+ * 逐轮事件、用户追问与压缩事件）。旧实现用 `turn:turnTo` 做去重键，第二条会被
+ * 静默跳过——它在注入里看得见，被展示分层裁掉后却 recall 不到。这正是用户原则里
+ * 最不能违反的一条（展示可以有损，存储不能有损）。
+ *
+ * 认领规则（同一轮区间内，按 milestone 原顺序）：
+ * 1. 有正文完全相同的未认领记录 → 已存，不写；
+ * 2. 有未认领的旧记录 → `update` 就地刷新，**但因果不降级**：旧记录里的具体 cause
+ *    优先于当前的模板标签（见 {@link MainlinePersistResult.recovered}）；
+ * 3. 都没有 → 新建。
+ *
+ * 抽成导出函数而不是留在 `refreshMainline` 里，是为了让审计脚本能对**库副本**跑
+ * 同一份落库逻辑——复制一份到脚本里，下次改这里时脚本会静默测旧行为。
+ *
+ * @param input - 存储（只用到 all/put/update）、会话 id、里程碑。
+ * @returns 已落库键集合、键 → 记录 id、新建/刷新计数、接回来的因果。
+ */
+export function persistMainlineRecords(input: {
+  store: Pick<DeepMemoryStore, 'all' | 'put' | 'update'>
+  sessionId: string
+  milestones: readonly Milestone[]
+  /**
+   * 本轮**由 LLM 回填**的里程碑键集合（{@link causeCacheKey}）。
+   *
+   * 用来区分"当前 cause 是模型补的具体因果"与"当前 cause 只是确定性标签"：后者不该
+   * 覆盖 L3 里那条更具体的旧因果（重启后 cause 缓存在内存里是空的，直接刷新会把
+   * `注入预算与优先级逻辑不符` 降级成 `当轮测试通过`——实测发生过，探针因此少一条）。
+   */
+  backfilledCauses?: ReadonlySet<string>
+}): MainlinePersistResult {
+  const { store, sessionId, milestones, backfilledCauses } = input
+  const backfilled = backfilledCauses ?? new Set<string>()
+  const recordsBySpan = new Map<string, MemoryRecord[]>()
+  for (const record of store.all()) {
+    if (record.kind !== 'milestone' || record.sessionId !== sessionId) continue
+    const span = `${record.turnFrom}:${record.turnTo}`
+    const pool = recordsBySpan.get(span)
+    if (pool === undefined) recordsBySpan.set(span, [record])
+    else pool.push(record)
+  }
+  const claimed = new Set<string>()
+  const stored = new Set<string>()
+  const recordIds = new Map<string, string>()
+  const recovered = new Map<string, string>()
+  let created = 0
+  let updated = 0
   // 细节记录的快照只取一次：refs 要指向**已存在**的 turn/digest，而不是本轮新写的里程碑。
   const details = store.all().filter((record) => record.kind === 'turn' || record.kind === 'digest')
 
-  for (const milestone of state.mainline) {
+  for (const milestone of milestones) {
     const turnTo = milestone.turnTo ?? milestone.turn
-    const key = `${milestone.turn}:${turnTo}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    store.put({
+    const key = causeCacheKey(milestone)
+    const pool = recordsBySpan.get(`${milestone.turn}:${turnTo}`) ?? []
+    const free = pool.filter((record) => !claimed.has(record.id))
+    // 候选记录先算出来，再决定正文：旧记录里的具体 cause 可能比当前确定性标签更有信息。
+    const candidate = free[0]
+    const parsed = candidate === undefined ? null : parseMilestoneLine(candidate.text)
+    const adoptCause = parsed !== null
+      && parsed.title === milestone.title
+      && parsed.cause.length > 0
+      && parsed.cause !== milestone.cause
+      // 旧记录里是模板标签时**不**采纳：`原因不明` 不该覆盖当前的确定性标签。
+      && !isTemplateCause(parsed.cause)
+      // 当前 cause 已经是本轮 LLM 回填的，就以它为准（它比旧记录更新）。
+      && !backfilled.has(key)
+    const cause = adoptCause ? parsed.cause : milestone.cause
+    if (adoptCause) recovered.set(key, cause)
+    const line = renderMilestoneLine(milestone.turn, turnTo, milestone.title, cause)
+
+    const exact = free.find((record) => record.text === line)
+    if (exact !== undefined) {
+      claimed.add(exact.id)
+      stored.add(key)
+      recordIds.set(key, exact.id)
+      continue
+    }
+    if (candidate !== undefined) {
+      claimed.add(candidate.id)
+      if (store.update(candidate.id, {
+        text: line,
+        // token 已经按上面那行的口径重算；不再沿用 milestone.tokens（它对应的是另一句 cause）。
+        tokens: estimateTokens(line),
+      })) updated += 1
+      stored.add(key)
+      recordIds.set(key, candidate.id)
+      continue
+    }
+    const record = store.put({
       kind: 'milestone',
       sessionId,
       turnFrom: milestone.turn,
       turnTo,
-      text: milestoneLine(milestone),
+      text: line,
       refs: details
-        .filter((record) => record.turnFrom <= turnTo && record.turnTo >= milestone.turn)
-        .map((record) => record.id),
-      tokens: milestone.tokens,
+        .filter((detail) => detail.turnFrom <= turnTo && detail.turnTo >= milestone.turn)
+        .map((detail) => detail.id),
+      tokens: estimateTokens(line),
     })
+    claimed.add(record.id)
+    pool.push(record)
+    recordsBySpan.set(`${milestone.turn}:${turnTo}`, pool)
+    stored.add(key)
+    recordIds.set(key, record.id)
+    created += 1
   }
-  return true
+  return { stored, recordIds, created, updated, recovered }
 }
 
 /** 补 cause 的等待上限（毫秒）。 */
@@ -2190,29 +2508,29 @@ function attemptOf(error: unknown): CauseAttempt | undefined {
  * 骨架行是从记录的 `text` 渲染的，而 `Milestone` 只是内存里的一份提取产物：只改内存
  * 的话，重启后读者从 L3 拿到的仍是确定性标签——**回填等于没做**。
  *
+ * 用 `causeCacheKey → recordId` 精确回写，而不是靠轮次区间反查：同一轮可能对应两条
+ * 里程碑（第 1 轮的「任务」与逐轮条目），区间反查只能改到第一条，另一条会静默
+ * 保留旧标签——那正是"取回的是残缺版"。
+ *
  * @param store - L3 存储。
- * @param sessionId - 当前会话 id（L3 是跨会话共享的库，别的会话的同轮区间不是这一条）。
  * @param milestones - 已回填的骨架。
+ * @param recordIds - {@link refreshMainline} 留下的键 → 记录 id。
  * @returns 实际改写的记录条数。
  */
-function syncMilestoneRecords(store: DeepMemoryStore, sessionId: string, milestones: readonly Milestone[]): number {
-  // 同一个轮次区间可能对应两条里程碑（第 1 轮的「任务」与第 1 轮的逐轮条目）：L3 落库
-  // 时先写的那条占住这个键、后面的被去重跳过（见 refreshMainline 的 seen），因此这里
-  // 也必须**先到先得**，否则会把记录改写成另一条里程碑的行。
-  const byKey = new Map<string, Milestone>()
-  for (const milestone of milestones) {
-    const key = milestoneKey(milestone)
-    if (!byKey.has(key)) byKey.set(key, milestone)
-  }
-
+function syncMilestoneRecords(
+  store: DeepMemoryStore,
+  milestones: readonly Milestone[],
+  recordIds: ReadonlyMap<string, string>,
+): number {
   let updated = 0
-  for (const record of store.all()) {
-    if (record.kind !== 'milestone' || record.sessionId !== sessionId) continue
-    const milestone = byKey.get(`${record.turnFrom}:${record.turnTo}`)
-    if (milestone === undefined) continue
+  for (const milestone of milestones) {
+    const id = recordIds.get(causeCacheKey(milestone))
+    if (id === undefined) continue
+    const record = store.get(id)
+    if (record === undefined || record.kind !== 'milestone') continue
     const line = milestoneLine(milestone)
     if (line === record.text) continue
-    if (store.update(record.id, { text: line, tokens: milestone.tokens })) updated += 1
+    if (store.update(id, { text: line, tokens: milestone.tokens })) updated += 1
   }
   return updated
 }
@@ -2343,7 +2661,7 @@ async function refreshMainlineCauses(input: {
     for (const item of applied) state.mainlineCauses.set(item.cacheKey, item.cause)
     state.causeFailure = null
     const synced = settings.l3Enabled && storeReady
-      ? syncMilestoneRecords(store, sessionId, state.mainline)
+      ? syncMilestoneRecords(store, state.mainline, state.mainlineRecordIds)
       : 0
     context.logger.info('[dsh-tri-layer-memory] 骨架 cause 补全：%d 条（L3 同步 %d 条）', applied.length, synced)
   } catch (error: unknown) {

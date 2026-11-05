@@ -19,6 +19,7 @@ import {
   pruneMainlineForInjection,
   renderMainline,
   renderPrunedMainline,
+  withBoundaryClauses,
 } from '../src/host/milestones.ts'
 import { fitMainline } from '../src/host/budget.ts'
 import { estimateTokens } from '../src/host/l1-working.ts'
@@ -148,10 +149,15 @@ test('fitMainline：上限裁剪从最旧开始，剪枝不会让"最近 N 条"�
   assert.equal(fit.kept, 2)
   assert.match(fit.text, /第 3 轮/)
   assert.match(fit.text, /第 4 轮/)
-  assert.doesNotMatch(fit.text, /第 1 轮/)
+  // 被裁条目本身不得出现在编号行里；末尾的"更早 N 条"指针行**允许**提到它的轮次
+  // （那正是"去哪里取回"的线索，不是内容）。所以按正文判，不按轮号判。
+  assert.doesNotMatch(fit.text, /部署完成 v0\.1\.22/, '被裁条目的正文不得进注入')
+  assert.match(fit.text, /更早 1 条主线（第 1 轮）/, '必须给回取回入口')
   assert.equal(fit.dropped, 1, '第 1 轮是被条数上限挤掉的（不是被当空话删掉）')
   assert.equal(fit.infoPruned, 1)
   assert.equal(fit.trimmed, true)
+  assert.equal(fit.earlier.length, 1, '被移出的条目要在结果里带回来（快照/审计用）')
+  assert.equal(fit.earlier[0].turn, 1)
 })
 
 test('fitMainline：全为空话时仍返回块头与任务标题（调用方不必判空）', () => {
@@ -164,4 +170,50 @@ test('fitMainline：全为空话时仍返回块头与任务标题（调用方不
   assert.match(fit.text, /## 里程碑主线骨架/)
   assert.match(fit.text, /- 任务：任务标题/)
   assert.match(fit.text, /本会话尚无可提取的里程碑/)
+})
+
+// ── 分层：任务边界逆着时间保留 ───────────────────────────────────────────
+
+test('fitMainline：任务边界条目逆着条数上限保留（纯按时间裁会把最持久的约束先丢掉）', () => {
+  const list = [
+    ms(1, '主内容不能遗忘，细节按需取回', '会话初始任务'),
+    ...Array.from({ length: 6 }, (_, i) => ms(i + 2, `第 ${i + 2} 轮部署完成`, '验证通过')),
+  ]
+  const fit = fitMainline(list, '任务', 10_000, 3)
+  assert.match(fit.text, /主内容不能遗忘/, '边界条目必须在场')
+  assert.equal(fit.boundaryKept, 1, '要单独报"为了边界多留了几条"')
+  assert.equal(fit.kept, 4, '3 条最近 + 1 条边界')
+  assert.equal(fit.earlier.length, 3, '被移出的条目要原样带回来（快照/审计用）')
+  assert.match(fit.text, /更早 3 条主线/, '末尾必须给回取回入口')
+})
+
+test('fitMainline：只有确认落库时才承诺"已存入 L3"', () => {
+  const list = [ms(1, '部署完成 v0.1.22', '验证通过'), ms(2, 'v0.1.25 已部署', '验证通过')]
+  const stored = fitMainline(list, '任务', 10_000, 1, { earlierStored: true, recallName: 'tri_recall' })
+  assert.match(stored.text, /已存入 L3/, '确认落库时给可行动提示')
+  assert.match(stored.text, /tri_recall/, '提示里的工具名必须是实际名字（可能被改名）')
+
+  const pending = fitMainline(list, '任务', 10_000, 1)
+  assert.match(pending.text, /暂不可 recall/, '未确认落库时不许说"已存入"——那会把模型引向不存在的记录')
+  assert.doesNotMatch(pending.text, /已存入 L3/)
+})
+
+// ── 存储无损：约束原话逐字进 L3 ──────────────────────────────────────────
+
+test('withBoundaryClauses：约束句逐字追加；非约束与 markdown 结构行不进', () => {
+  const base = '## 任务主线\n- turn 3: 做记忆层'
+  const text = withBoundaryClauses(base, [
+    '插件必须全局生效，不绑定任何特定预设\n今天天气不错\n- 这是粘贴报告里的列表项\n不要用相对路径解析 $DSH_HOME',
+    '禁止把任务边界剪掉；不要用相对路径解析 $DSH_HOME',
+  ])
+  assert.ok(text.startsWith(base), '正文必须原样保留（只加不减）')
+  assert.match(text, /## 用户原话·约束（未剪）/)
+  assert.match(text, /插件必须全局生效，不绑定任何特定预设/)
+  assert.match(text, /不要用相对路径解析 \$DSH_HOME/)
+  assert.doesNotMatch(text, /今天天气不错/, '非约束句不该进（存储也要讲信噪比）')
+  assert.doesNotMatch(text, /这是粘贴报告里的列表项/, 'markdown 结构行不是用户约束')
+  // 同一句重复出现只留一条（去重按句子）。
+  assert.equal(text.split('不要用相对路径解析 $DSH_HOME').length - 1, 1, '重复句必须去重')
+  // 没有约束句时原样返回，不追加空标题。
+  assert.equal(withBoundaryClauses(base, ['今天天气不错']), base)
 })

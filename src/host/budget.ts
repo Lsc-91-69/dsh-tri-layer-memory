@@ -18,8 +18,8 @@
  * @module dsh-tri-layer-memory/budget
  */
 import { estimateTokens } from './l1-working.ts'
-import { pruneMainlineForInjection, renderMainline, renderPrunedMainline } from './milestones.ts'
-import type { Milestone } from './milestones.ts'
+import { isBoundaryMilestone, pruneMainlineForInjection, renderMainline, renderPrunedMainline } from './milestones.ts'
+import type { EarlierMainlineNote, Milestone, PrunedMainlineLine } from './milestones.ts'
 
 /** 参与仲裁的一块注入内容。 */
 export interface InjectionBlock {
@@ -325,6 +325,21 @@ export interface MainlineFit {
   causeStripped: number
   /** 信息量剪枝相对全量骨架省下的估算 token（未裁上限时）。 */
   prunedTokens: number
+  /** 因"标题也是空话"被整条删掉的里程碑（快照/审计用；不注入）。 */
+  infoDropped: Milestone[]
+  /** 因"标题自身就是结论"被去掉 cause 的里程碑（快照/审计用）。 */
+  causeStrippedList: Milestone[]
+  /**
+   * 展示分层移出注入的旧主线（按原顺序）。它们**没有从存储里消失**——
+   * 只是不在这一份注入文本里，靠 {@link renderPrunedMainline} 末尾那一行指回去。
+   */
+  earlier: Milestone[]
+  /**
+   * 为保任务边界而"逆着时间"留下的条数（本会被"最近 N 条"裁掉、因是约束/排除而保留）。
+   */
+  boundaryKept: number
+  /** 本会话的 recall 工具名（提示行用；调用方应传实际名字）。 */
+  recallName: string
 }
 
 /**
@@ -336,15 +351,21 @@ export interface MainlineFit {
  * 同一份预算，等于让承诺随预算打折：真正需要长期在场的它，会是最先被丢的那个。
  * 所以这里给它一条独立上限：不与任何其他注入方竞争，超了只裁自己。
  *
- * 裁剪规则（两种上限同向）：**保留任务标题行，从最旧的里程碑开始丢**。
- * 越新的里程碑越接近"当前在哪、卡在哪"，越旧的越可能已被 L2/L3 覆盖；
- * 而任务标题行是整份骨架的锚点，丢了骨架就不再是"这个会话在做什么"。
- * 刻意整条丢而不是截断半行：半条里程碑是不可读的噪声，不如不要。
+ * 裁剪分两步，顺序不能反：
+ * 1. **信息量剪枝**（{@link pruneMainlineForInjection}）：模板 cause、纯空话整条删；
+ * 2. **展示分层**：最近 `maxMilestones` 条 + 全部**任务边界**条目进注入；更早的
+ *    非边界条目移出注入，但**必须**在 L3 里有记录——末尾会渲染一行指回去。
+ *    分层是展示策略，不是删除：`earlier` 原样带在返回值里，调用方写进快照。
+ *
+ * 边界条目逆着时间保留的理由见 {@link isBoundaryMilestone}：最早的那批里程碑
+ * 恰好是任务边界最密集的地方，纯按时间裁会把最持久的约束第一个丢掉。
  *
  * @param milestones - {@link extractMilestones} 的输出（按 seq 升序）。
  * @param taskTitle - 会话任务标题；给了就保留在块首。
  * @param maxTokens - 骨架独立 token 上限。
- * @param maxMilestones - 骨架条数上限。
+ * @param maxMilestones - "最近 N 条"的 N；边界条目可以额外突破它（但仍受 token 上限）。
+ * @param options - `earlierStored`：被移出的条目是否**确认**已落在 L3（默认 false，
+ *   不承诺可 recall）；`recallName`：提示行里写的工具名（默认 `memory_recall`）。
  * @returns 裁剪结果（里程碑为空时仍返回块头，调用方不必判空）。
  */
 export function fitMainline(
@@ -352,9 +373,11 @@ export function fitMainline(
   taskTitle: string | undefined,
   maxTokens: number,
   maxMilestones: number,
+  options: { earlierStored?: boolean; recallName?: string } = {},
 ): MainlineFit {
   const budget = Math.max(0, Math.trunc(maxTokens))
   const cap = Math.max(0, Math.trunc(maxMilestones))
+  const recallName = options.recallName ?? 'memory_recall'
 
   // 信息量剪枝先于上限裁剪：模板 cause 和纯空话条目本来就不该占"最近 N 条"的名额。
   // 顺序反过来的话，60 条上限里会先被空话占满，真实条目再被这条上限挤出去——
@@ -363,29 +386,59 @@ export function fitMainline(
   const fullTokens = estimateTokens(renderMainline(milestones, taskTitle))
   const prunedFullTokens = estimateTokens(renderPrunedMainline(pruned.lines, taskTitle))
 
-  // 条数上限先夹一次：留最近的，理由与 token 裁剪一致。
-  let kept = cap === 0 ? [] : pruned.lines.slice(Math.max(0, pruned.lines.length - cap))
-  let dropped = pruned.lines.length - kept.length
-  let text = renderPrunedMainline(kept, taskTitle)
+  // 展示分层：最近 cap 条 + 所有边界条目（保持原顺序渲染，分层只决定"选谁"）。
+  const recent = cap === 0 ? [] : pruned.lines.slice(Math.max(0, pruned.lines.length - cap))
+  const recentSet = new Set(recent)
+  const boundaryExtra = pruned.lines.filter((line) => !recentSet.has(line) && isBoundaryMilestone(line.milestone))
+  const selected = new Set<PrunedMainlineLine>([...recent, ...boundaryExtra])
+  let kept = pruned.lines.filter((line) => selected.has(line))
 
-  // token 上限是**渲染后**实测的：块头、标题行、行号前缀都算在内，
+  /** 当前选中集合之外的、仍需要进提示行的旧主线。 */
+  const earlierOf = (lines: readonly PrunedMainlineLine[]): Milestone[] => {
+    const inKept = new Set(lines)
+    return pruned.lines.filter((line) => !inKept.has(line)).map((line) => line.milestone)
+  }
+  /** 把一组里程碑折成提示行数据（无条目时为 null）。 */
+  const noteOf = (list: readonly Milestone[]): EarlierMainlineNote | null => {
+    if (list.length === 0) return null
+    const turns = list.map((m) => m.turn)
+    return {
+      count: list.length,
+      from: Math.min(...turns),
+      to: Math.max(...list.map((m) => m.turnTo ?? m.turn)),
+      stored: options.earlierStored === true,
+      recallName,
+    }
+  }
+
+  let earlier = earlierOf(kept)
+  let text = renderPrunedMainline(kept, taskTitle, noteOf(earlier) ?? undefined)
+
+  // token 上限是**渲染后**实测的：块头、标题行、行号前缀、提示行都算在内，
   // 这样"装得下"就是真的装得下，而不是按条目数估算出来的假保证。
+  // 超限时**先丢非边界**：任务边界是这条上限唯一该保护的例外，只有全是边界时才按最旧丢。
   while (kept.length > 0 && estimateTokens(text) > budget) {
-    kept = kept.slice(1)
-    dropped += 1
-    text = renderPrunedMainline(kept, taskTitle)
+    const victim = kept.find((line) => !isBoundaryMilestone(line.milestone)) ?? kept[0]
+    kept = kept.filter((line) => line !== victim)
+    earlier = earlierOf(kept)
+    text = renderPrunedMainline(kept, taskTitle, noteOf(earlier) ?? undefined)
   }
 
   return {
     text,
     tokens: estimateTokens(text),
     kept: kept.length,
-    dropped,
+    dropped: pruned.lines.length - kept.length,
     maxTokens: budget,
     maxMilestones: cap,
-    trimmed: dropped > 0,
+    trimmed: pruned.lines.length - kept.length > 0,
     infoPruned: pruned.dropped.length,
     causeStripped: pruned.stripped.length,
     prunedTokens: fullTokens - prunedFullTokens,
+    infoDropped: pruned.dropped,
+    causeStrippedList: pruned.stripped,
+    earlier,
+    boundaryKept: boundaryExtra.length,
+    recallName,
   }
 }

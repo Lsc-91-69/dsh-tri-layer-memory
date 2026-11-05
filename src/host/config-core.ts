@@ -136,7 +136,16 @@ export interface TriLayerConfig {
   mainlineEnabled: boolean
   /** 是否把骨架块注入每轮请求（关掉后仍提取并落 L3，只是不注入）。 */
   mainlineInject: boolean
-  /** 骨架条数上限，超出后从最旧的里程碑开始丢（越新越值钱）。 */
+  /**
+   * 骨架"最近 N 条"的条数上限。
+   *
+   * 展示分层的基准：最近 N 条进注入，更早的非边界条目移出注入（**仍落 L3 可 recall**，
+   * 注入末尾会写一行指回去）。任务边界类条目（约束/排除/方向否决）不受这个 N 限制，
+   * 逆着时间也会保留——它们通常出现在最早的那几轮，纯按时间裁会把最持久的约束先丢掉。
+   *
+   * 60 → 40 的依据（真实会话 90 条骨架）：40 条 + 7 条边界 = 1,004 token，比 60 条的
+   * 1,363 token 省 26%，而边界条目一条不少；被移出的 42 条全部在 L3（审计验证 42/42）。
+   */
   mainlineMaxMilestones: number
   /**
    * 骨架**独立**的 token 上限，与 `injectionBudgetTokens` 互不影响。
@@ -251,7 +260,7 @@ export const DEFAULTS: TriLayerConfig = {
 
   mainlineEnabled: true,
   mainlineInject: true,
-  mainlineMaxMilestones: 60,
+  mainlineMaxMilestones: 40,
   mainlineMaxTokens: 2500,
   mainlineCauseEnabled: true,
   mainlineCauseMinBatch: 3,

@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -354,6 +354,165 @@ test('high-water mark：L1 溢出轮数不变时不重新提取，变化时才�
     const skeleton = blockOf(textOf(third), '## 里程碑主线骨架')
     assert.match(skeleton, /第 11 轮:/, '重新提取后应覆盖到新的一轮')
     assert.match(skeleton, /审批被拒/, '重新提取后应包含新追加的事件')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── 可恢复性回归：同轮多条、正文刷新、全量快照 ───────────────────────────
+
+/** 造一份"同一轮产出两条里程碑"的事件流（目标事件 + 阻塞失败）。 */
+function multiMilestoneEvents() {
+  const events = []
+  let seq = 0
+  events.push({ type: 'turn/start', seq: seq++, data: { turn: 1 } })
+  events.push({
+    type: 'user/message', seq: seq++,
+    data: { source: { kind: 'user' }, content: [{ type: 'text', text: '第1轮：请处理记忆压缩任务' }] },
+  })
+  events.push({ type: 'goal/change', seq: seq++, data: { operation: 'create', goal: { objective: '构建三层记忆插件' } } })
+  events.push({
+    type: 'tool/call', seq: seq++,
+    data: { turn: 1, step: 1, callId: 'c1', name: 'pwsh', arguments: JSON.stringify({ description: '跑测试' }) },
+  })
+  events.push({
+    type: 'tool/result', seq: seq++,
+    data: {
+      turn: 1, step: 1, isError: true,
+      message: { role: 'tool', toolCallId: 'c1', content: [{ type: 'text', text: 'FAIL test/foo.test.mjs' }] },
+    },
+  })
+  events.push({ type: 'turn/end', seq: seq++, data: { turn: 1, reason: { kind: 'completed' } } })
+  events.push(...syntheticEvents(2, 4, seq).map((event) => ({ ...event, seq: event.seq + seq })))
+  return events
+}
+
+test('同轮多条里程碑全部落 L3（回归：按轮区间去重会让第二条永久取不回）', async () => {
+  const events = multiMilestoneEvents()
+  const extracted = extractMilestones(events)
+  const sameTurn = extracted.filter((m) => m.turn === 1 && (m.turnTo ?? m.turn) === 1)
+  // 前提：夹具必须真的让同一轮产出 ≥2 条，否则这条测试什么都没证明。
+  assert.ok(sameTurn.length >= 2, `夹具必须在第 1 轮产出 ≥2 条里程碑，实际 ${sameTurn.length}`)
+
+  const { dir } = await runSession({ l1RetainTurns: 2 }, events)
+  try {
+    const records = readRecords(dir).filter((r) => r.kind === 'milestone')
+    const turn1 = records.filter((r) => r.turnFrom === 1 && r.turnTo === 1)
+    assert.equal(turn1.length, sameTurn.length,
+      `同轮 ${sameTurn.length} 条里程碑必须各有记录，实际 ${turn1.length} 条`)
+
+    // 逐条核对"这条骨架行取不回来"——取回就是能在 L3 里找到同文记录。
+    const stored = new Set(records.map((r) => r.text))
+    for (const milestone of extracted) {
+      const span = milestone.turnTo === undefined || milestone.turnTo === milestone.turn
+        ? `第 ${milestone.turn} 轮`
+        : `第 ${milestone.turn}–${milestone.turnTo} 轮`
+      const line = `${span}: ${milestone.title} — ${milestone.cause}`
+      assert.ok(stored.has(line), `骨架行必须能逐字取回：${line}`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('重新提取时 L3 正文就地刷新，不产生同区间两份记录', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-mainline-refresh-'))
+  try {
+    const { step } = harness({ l3Dir: dir, l3Store: 'jsonl', l1RetainTurns: 4 })
+    await tick()
+    const events = syntheticEvents(1, 6)
+    const session = { id: 's-refresh', events }
+    await step(session)
+    const before = readRecords(dir).filter((r) => r.kind === 'milestone')
+
+    // 追加"会改变第 1 轮 cause"的事件（一次成功的验证），并推进新一轮触发重新提取。
+    events.push({
+      type: 'tool/result', seq: 900,
+      data: { turn: 1, step: 2, message: { role: 'tool', toolCallId: 'late', content: [{ type: 'text', text: '全部通过' }] } },
+    })
+    events.push(...syntheticEvents(7, 7, 901))
+    await step(session)
+    const after = readRecords(dir).filter((r) => r.kind === 'milestone')
+
+    // 同一轮区间不许出现两份记录（旧实现的 update 路径靠"先到先得"，同轮多条会改错）。
+    const spans = after.map((r) => `${r.turnFrom}:${r.turnTo}`)
+    assert.equal(new Set(spans).size, spans.length, `同轮区间不得重复：${spans.join(', ')}`)
+    // 记录只增不减：刷新是就地改写，不是删了重写。
+    assert.ok(after.length >= before.length, '刷新后记录数不得变少')
+    // 每条记录都必须是当前骨架里某条里程碑的逐字行。
+    const current = new Set(extractMilestones(events).map((m) => {
+      const span = m.turnTo === undefined || m.turnTo === m.turn ? `第 ${m.turn} 轮` : `第 ${m.turn}–${m.turnTo} 轮`
+      return `${span}: ${m.title} — ${m.cause}`
+    }))
+    for (const record of after) {
+      assert.ok(current.has(record.text), `L3 里残留了过期正文（取回会拿到旧版）：${record.text}`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('全量骨架快照 <sessionId>.mainline.json：未剪枝 + 剪枝清单 + 落库核对', async () => {
+  const events = multiMilestoneEvents()
+  const { dir } = await runSession({}, events)
+  try {
+    const file = join(dir, 's-mainline.mainline.json')
+    assert.ok(existsSync(file), `快照必须落盘：${file}`)
+    const snapshot = JSON.parse(readFileSync(file, 'utf8'))
+    const extracted = extractMilestones(events)
+    assert.equal(snapshot.milestones.length, extracted.length,
+      '快照必须保存**未剪枝**的全量骨架（展示可以省，本地不能省）')
+    assert.equal(snapshot.totals.milestones, extracted.length)
+    assert.ok(Array.isArray(snapshot.earlier), '要有"被移出注入"的清单')
+    assert.ok(Array.isArray(snapshot.infoDropped), '要有"被信息量剪枝删掉"的清单')
+    assert.ok(Array.isArray(snapshot.causeStripped), '要有"被剥掉 cause"的清单')
+    assert.match(snapshot.note, /存储无损/, '快照要自己说明它和注入的区别')
+    // 每条都要带"是否确认落库"，这样人复查时能直接看出 recoverability。
+    for (const item of snapshot.milestones) {
+      assert.equal(typeof item.stored, 'boolean', '每条里程碑必须标注是否已落库')
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('L3 turn 记录里逐字保留约束原话（存储侧无损的回归）', async () => {
+  const events = syntheticEvents(1, 6)
+  // 给第 1 轮塞一条"分类预算会漏掉"的约束句：它不是失败/验证类，分层抽取不保证留下。
+  events[1].data.content[0].text = '第1轮：请处理记忆压缩任务\n必须保留任务边界，不能把约束剪掉，避免只留标题'
+  const { dir } = await runSession({ l1RetainTurns: 2, l2RetainTurns: 1 }, events)
+  try {
+    const turns = readRecords(dir).filter((r) => r.kind === 'turn' && r.turnFrom === 1)
+    assert.ok(turns.length > 0, '第 1 轮应已溢出并蒸馏进 L3')
+    assert.match(turns[0].text, /用户原话·约束（未剪）/, 'turn 记录要带未剪约束段')
+    assert.match(turns[0].text, /必须保留任务边界，不能把约束剪掉，避免只留标题/,
+      '约束原话必须逐字可取回（不是转述、不是截断）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('历史 turn 记录缺"未剪约束"段时会被批量补写（存量修复，不是只对新轮生效）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tlm-backfill-'))
+  try {
+    // 预置一条"旧版本写的"记录：没有约束段（真实历史记录就是这样）。
+    const seeded = {
+      id: 'l3-old-0001', kind: 'turn', createdAt: 1, sessionId: 's-backfill',
+      turnFrom: 1, turnTo: 1, text: '## 任务主线\n- turn 1: 旧记录', tokens: 10, keywords: ['旧记录'], refs: [],
+    }
+    writeFileSync(join(dir, 'deep-memory.jsonl'), JSON.stringify(seeded) + '\n')
+
+    const { step } = harness({ l3Dir: dir, l3Store: 'jsonl', l1RetainTurns: 2, l2RetainTurns: 1 })
+    await tick()
+    const events = syntheticEvents(1, 6)
+    events[1].data.content[0].text = '第1轮：必须保留任务边界，不能把约束剪掉'
+    await step({ id: 's-backfill', events })
+
+    const record = readRecords(dir).find((r) => r.id === 'l3-old-0001')
+    assert.ok(record !== undefined, '预置记录不能被新写入覆盖掉')
+    assert.match(record.text, /用户原话·约束（未剪）/, '存量记录必须被补写，而不是只对新轮生效')
+    assert.match(record.text, /必须保留任务边界，不能把约束剪掉/, '补进去的必须是用户原话（逐字）')
+    assert.match(record.text, /旧记录/, '补写是**追加**，不许抹掉原有正文')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
